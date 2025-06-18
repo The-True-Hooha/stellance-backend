@@ -17,10 +17,10 @@ func main() {
 	log := logger.Logger()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	stage := os.Getenv("STAGE")
 	ctx = middleware.WriteLoggerToContext(ctx, log)
 
-	if os.Getenv("STAGE") != "prod" {
+	if stage != "prod" {
 		err := godotenv.Load(".env")
 		if err != nil {
 			log.Error("Error loading the .env file:", "error", err)
@@ -30,13 +30,21 @@ func main() {
 	pg := database.PostgresConfig{
 		Name:     os.Getenv("PG_NAME"),
 		Port:     utils.GetEnvAsInt(),
-		Host:     os.Getenv("PB_HOST"),
+		Host:     os.Getenv("PG_HOST"),
 		User:     os.Getenv("PG_USER"),
 		Password: os.Getenv("PG_PASSWORD"),
 		Stage:    os.Getenv("STAGE"),
 	}
 
-	err := config.InitializeContainer(ctx, pg, log)
+	redis := database.RedisConfig{
+		Host:     os.Getenv("REDIS_HOST"),
+		Port:     os.Getenv("REDIS_PORT"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		Index:    0,
+		Stage:    os.Getenv("STAGE"),
+	}
+
+	err := config.InitializeContainer(ctx, pg, log, redis)
 	if err != nil {
 		log.Error("failed to initialize app container", "error", err.Error())
 		os.Exit(1)
