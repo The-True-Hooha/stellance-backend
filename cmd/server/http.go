@@ -22,7 +22,6 @@ type Server struct {
 	server *http.Server
 	router *http.ServeMux
 	logger *slog.Logger
-	cache  interface{} // TODO: user redis client here
 }
 
 type ServerHealthResponse struct {
@@ -39,14 +38,18 @@ type HealthComponentStatus struct {
 	Error   string `json:"error,omitempty"`
 }
 
-var health int32
-var startTime = time.Now()
-var apiVersion = "1.0.0-dev"
+var (
+	health     int32
+	startTime  = time.Now()
+	apiVersion = "1.0.0-dev"
+)
 
 func SetServerConfig() *Server {
 	router := http.NewServeMux()
+	redis := config.GetAppContainer().Redis
 	handler := middleware.ErrorHandlerMiddleware(router)
 	handler = middleware.LoggerMiddleware(handler)
+	handler = middleware.RateLimitGuardMiddleware(redis)(handler)
 	log := logger.Logger()
 
 	server := &http.Server{
@@ -59,7 +62,6 @@ func SetServerConfig() *Server {
 	return &Server{
 		server: server,
 		logger: log,
-		cache:  nil,
 		router: router,
 	}
 }
@@ -183,16 +185,16 @@ func checkRedis() HealthComponentStatus {
 		Name:   "redis",
 		Status: "healthy",
 	}
-	
+
 	container := config.GetAppContainer()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	
+
 	if err := container.Redis.Ping(ctx).Err(); err != nil {
 		status.Status = "unhealthy"
 		status.Error = err.Error()
 	}
-	
+
 	status.Latency = fmt.Sprintf("%.2fms", time.Since(start).Seconds()*1000)
 	return status
 }

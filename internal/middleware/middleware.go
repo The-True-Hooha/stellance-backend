@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/The-True-Hooha/stellance-backend.git/pkg/logger"
+	ratelimiter "github.com/The-True-Hooha/stellance-backend.git/pkg/ratelimits"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 type ContextKey string
@@ -62,7 +64,6 @@ func LoggerMiddleware(h http.Handler) http.Handler {
 			slog.String("correlation_id", correlationId),
 			slog.String("request_id", requestId),
 		)
-
 
 		ctx := WriteLoggerToContext(r.Context(), log)
 		ctx = context.WithValue(ctx, RequestIDKey, requestId)
@@ -203,4 +204,29 @@ func sanitizePath(path string) string {
 		sanitized = sp.pattern.ReplaceAllString(sanitized, sp.replacement)
 	}
 	return sanitized
+}
+
+func RateLimitGuardMiddleware(redis *redis.Client) func(http.Handler) http.Handler {
+	prefix := "stellance:rate_limit"
+	limiter := ratelimiter.NewRateLimiter(redis, prefix, true)
+
+	return func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var config ratelimiter.RateLimitConfig
+			switch {
+			case strings.HasPrefix(r.URL.Path, "/auth/login"),
+				strings.HasPrefix(r.URL.Path, "/auth/signup"):
+				config = ratelimiter.StrictLimit
+			case r.Context().Value("user_id") != nil:
+				config = ratelimiter.AuthenticatedLimit
+			default:
+				fmt.Println("the default rate limit is been used")
+				config = ratelimiter.DefaultLimit
+			}
+
+			handlerWithRateLimit := limiter.TokenBucket(config)(h)
+
+			handlerWithRateLimit.ServeHTTP(w, r)
+		})
+	}
 }
