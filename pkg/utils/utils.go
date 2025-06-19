@@ -3,13 +3,15 @@ package utils
 import (
 	"os"
 	"strconv"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type ApiResponse struct {
-	StatusCode int         `json:"status_code"`
-	Message    string      `json:"message"`
-	Data       interface{} `json:"data,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	StatusCode int    `json:"status_code"`
+	Message    string `json:"message"`
+	Data       any    `json:"data,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 func GetEnvAsInt() int {
@@ -19,4 +21,14 @@ func GetEnvAsInt() int {
 		}
 	}
 	return 5433
+}
+
+
+func HashString(data string)(string, error){
+	hash, err := bcrypt.GenerateFromPassword([]byte(data), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func CompareHash(hash, password string) error {
+    return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
