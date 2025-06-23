@@ -19,8 +19,6 @@ WORKDIR /root
 
 COPY --from=builder /app/main .
 
-COPY --from=builder /app/static ./static
-
 ENV STAGE=prod
 ENV APP_ENV=prod
 
