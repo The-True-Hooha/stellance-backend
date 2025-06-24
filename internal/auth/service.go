@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/The-True-Hooha/stellance-backend.git/internal/user"
+	"github.com/The-True-Hooha/stellance-backend.git/mail"
 	"github.com/The-True-Hooha/stellance-backend.git/pkg/config"
 	jwt_ "github.com/The-True-Hooha/stellance-backend.git/pkg/jwt"
 	"github.com/The-True-Hooha/stellance-backend.git/pkg/utils"
@@ -31,6 +33,7 @@ type AuthServiceConfig struct {
 	postgres *pgxpool.Pool
 	redis    *redis.Client
 	jwt      *jwt_.JwtTokenServiceConfig
+	mail     *mail.Mailer
 }
 
 func NewAuthService() *AuthServiceConfig {
@@ -39,6 +42,18 @@ func NewAuthService() *AuthServiceConfig {
 		postgres: config.GetAppContainer().Postgres,
 		redis:    config.GetAppContainer().Redis,
 		jwt:      jwt_.JwtTokenService(),
+		mail:     mail.NewMailer(),
+	}
+}
+
+func (c *AuthServiceConfig) ClearRedis(ctx context.Context) *utils.ApiResponse {
+	err := c.redis.FlushDB(ctx).Err()
+	if err != nil {
+		panic(err)
+	}
+	return &utils.ApiResponse{
+		StatusCode: http.StatusOK,
+		Message:    "Cleared Successfully",
 	}
 }
 
@@ -107,24 +122,6 @@ func (config *AuthServiceConfig) CreateNewUser(ctx context.Context, dto AuthRequ
 			Error:      err.Error(),
 		}
 	}
-	emailToken, err := utils.GenerateShortURL(fmt.Sprintf("%s%s", email, user.ID), log)
-	if err != nil {
-		log.Error(fmt.Sprintf("error failed to generate email token for userId =>> %s", user.ID), "error", err)
-		return &utils.ApiResponse{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "service unavailable, kindly contact support",
-			Error:      err.Error(),
-		}
-	}
-	err = redis.Set(ctx, fmt.Sprintf("email_%s", emailToken), email, emailCacheTime).Err()
-	if err != nil {
-		log.Error("failed to add email token to redis", "error", err)
-		return &utils.ApiResponse{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "service unavailable",
-		}
-	}
-
 	userCache, _ := json.Marshal(user)
 	err = redis.Set(ctx, user.ID, userCache, userCacheTime).Err()
 	if err != nil {
@@ -140,6 +137,13 @@ func (config *AuthServiceConfig) CreateNewUser(ctx context.Context, dto AuthRequ
 			Error:      err.Error(),
 		}
 	}
+	err = config.GenerateAndSendEmail(ctx, email, user.ID, config.log)
+	if err != nil {
+		return &utils.ApiResponse{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "Server currently unavailable",
+		}
+	}
 
 	log.Debug(fmt.Sprintf("new user with ID %s created successfully", user.ID))
 	return &utils.ApiResponse{
@@ -149,7 +153,6 @@ func (config *AuthServiceConfig) CreateNewUser(ctx context.Context, dto AuthRequ
 			User:        user,
 			AccessToken: accessToken,
 			ExpiresIn:   time.Now().Add(1 * time.Hour).Unix(),
-			EmailToken:  emailToken,
 		},
 	}
 }
@@ -170,7 +173,16 @@ func (config *AuthServiceConfig) Login(ctx context.Context, dto AuthRequestDto) 
 			return &utils.ApiResponse{
 				StatusCode: http.StatusForbidden,
 				Message:    "invalid login credentials, contact support",
-				Data:       existingUser,
+			}
+		}
+
+		if !existingUser.EmailVerified {
+			err = config.GenerateAndSendEmail(ctx, email, existingUser.ID, config.log)
+			if err != nil {
+				return &utils.ApiResponse{
+					StatusCode: http.StatusInternalServerError,
+					Message:    "Server currently unavailable",
+				}
 			}
 		}
 		accessToken, err := config.jwt.GenerateNewAccessToken(existingUser.ID, existingUser.Email, string(existingUser.Role))
@@ -182,14 +194,16 @@ func (config *AuthServiceConfig) Login(ctx context.Context, dto AuthRequestDto) 
 				Error:      err.Error(),
 			}
 		}
+		existingUser.Password = ""
 		return &utils.ApiResponse{
 			StatusCode: http.StatusOK,
-			Message:    "login successful",
+			Message:    "Login successful! A new email has been sent to your email address please verify your email",
 			Data: &AuthResponseDto{
-				User:        *existingUser,
-				AccessToken: accessToken,
-				ExpiresIn:   time.Now().Add(1 * time.Hour).Unix(),
-				// EmailToken: ,
+				User:            *existingUser,
+				AccessToken:     accessToken,
+				ExpiresIn:       time.Now().Add(1 * time.Hour).Unix(),
+				EmailVerified:   existingUser.EmailVerified,
+				ProfileComplete: existingUser.FirstName != nil && existingUser.LastName != nil,
 			},
 		}
 	}
@@ -199,11 +213,17 @@ func (config *AuthServiceConfig) Login(ctx context.Context, dto AuthRequestDto) 
 	}
 }
 
-func (config *AuthServiceConfig) ValidateEmail(ctx context.Context, token string) *utils.ApiResponse {
+func (config *AuthServiceConfig) ValidateEmail(ctx context.Context, token, email_ string) *utils.ApiResponse {
 	email, err := config.redis.Get(ctx, fmt.Sprintf("email_%s", token)).Result()
-	fmt.Println(email, "this is the user email")
+
 	if err != nil {
-		// todo: send email here
+		err = config.GenerateAndSendEmail(ctx, email_, token, config.log)
+		if err != nil {
+			return &utils.ApiResponse{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "Server currently unavailable",
+			}
+		}
 		return &utils.ApiResponse{
 			StatusCode: http.StatusBadRequest,
 			Message:    "your email verification link has expired, a new email has been sent to you",
@@ -308,4 +328,27 @@ func (config *AuthServiceConfig) GenerateRefreshToken(ctx context.Context, acces
 			"refresh_token_expiry": time.Now().Add(7 * 24 * time.Hour).Unix(),
 		},
 	}
+}
+
+func (c *AuthServiceConfig) GenerateAndSendEmail(ctx context.Context, email, user_id string, log *slog.Logger) error {
+	emailToken, err := utils.GenerateShortURL(fmt.Sprintf("%s%s", email, user_id), log)
+	if err != nil {
+		log.Error(fmt.Sprintf("error failed to generate email token for userId =>> %s", user_id), "error", err)
+		return err
+	}
+	err = c.redis.Set(ctx, fmt.Sprintf("email_%s", emailToken), email, emailCacheTime).Err()
+	if err != nil {
+		log.Error("failed to add email token to redis", "error", err)
+		return err
+	}
+	go func() {
+		ee := url.QueryEscape(email)
+		eu := url.QueryEscape(emailToken)
+		email_url := fmt.Sprintf("https://usestellance.com/sign-up/verify-email?email=%s&token=%s", ee, eu)
+		err := c.mail.SendVerificationEmail(email, email_url)
+		if err != nil {
+			log.Warn("error sending email to user", "error", err)
+		}
+	}()
+	return nil
 }
