@@ -321,7 +321,7 @@ func (config *AuthServiceConfig) GenerateRefreshToken(ctx context.Context, acces
 	}
 
 	return &utils.ApiResponse{
-		StatusCode: http.StatusOK,
+		StatusCode: http.StatusCreated,
 		Message:    "successful",
 		Data: map[string]interface{}{
 			"refresh_token":        token,
