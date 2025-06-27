@@ -375,10 +375,10 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 	response := InvoiceListResponseDto{
 		Invoice: invoices,
 		Meta: PaginationMeta{
-			Page:       dto.Page,
-			Count:      dto.Count,
-			TotalItems: totalItems,
-			TotalPages: totalPages,
+			Page:              dto.Page,
+			PageCount:         dto.Count,
+			TotalInvoiceCount: totalItems,
+			TotalPages:        totalPages,
 		},
 	}
 

@@ -39,7 +39,7 @@ func RegisterInvoiceFiltersValidation(v *validator.Validate) {
 	})
 
 	v.RegisterValidation("order_by", func(fl validator.FieldLevel) bool {
-			order := strings.ToLower(fl.Field().String())
+		order := strings.ToLower(fl.Field().String())
 		return order == "asc" || order == "desc"
 	})
 }
@@ -132,16 +132,16 @@ func (handler *InvoiceHandler) GetManyInvoiceHandler(w http.ResponseWriter, r *h
 		if p, err := strconv.Atoi(page); err == nil {
 			dto.Page = p
 		}
-	}else {
+	} else {
 		dto.Page = 1
 	}
 
-	pageCount := r.URL.Query().Get("page_size")
+	pageCount := r.URL.Query().Get("page_count")
 	if pageCount != "" {
 		if ps, err := strconv.Atoi(pageCount); err == nil {
 			dto.Count = ps
 		}
-	}else{
+	} else {
 		dto.Count = 10
 	}
 
