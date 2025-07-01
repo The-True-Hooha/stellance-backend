@@ -62,15 +62,19 @@ func (is *InvoiceService) GenerateNewInvoice(ctx context.Context, dto CreateInvo
 	defer tx.Rollback(ctx)
 
 	var businessName sql.NullString
+	var country string
+	var first_name string
+	var last_name string
+	var email string
 
-	const businessNameQ string = `SELECT business_name FROM users WHERE id = $1
+	const businessNameQ string = `SELECT business_name, country, email, first_name, last_name FROM users WHERE id = $1
 		AND is_active = true
 		AND email_verified = true
 		AND first_name IS NOT NULL 
 		AND first_name <> '' 
 		AND last_name IS NOT NULL 
 		AND last_name <> ''`
-	err = tx.QueryRow(ctx, businessNameQ, userId).Scan(&businessName)
+	err = tx.QueryRow(ctx, businessNameQ, userId).Scan(&businessName, &country, &email, &first_name, &last_name)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return &utils.ApiResponse{
@@ -165,6 +169,14 @@ func (is *InvoiceService) GenerateNewInvoice(ctx context.Context, dto CreateInvo
 		}
 	}
 
+	sender := InvoiceSenderDetails{
+		UserId:       userId,
+		BusinessName: &businessNameStr,
+		Name:         first_name + " " + last_name,
+		Email:        email,
+		Location:     country,
+	}
+
 	invoiceResponse := InvoiceResponse{
 		ID:            invoiceId,
 		InvoiceNumber: invoiceNumber,
@@ -181,6 +193,7 @@ func (is *InvoiceService) GenerateNewInvoice(ctx context.Context, dto CreateInvo
 		DueDate:       dueDate,
 		CreatedAt:     createdAt,
 		Items:         dto.InvoiceItems,
+		CreatedBy:     sender,
 	}
 
 	is.log.Info("invoice created successfully",
@@ -818,8 +831,8 @@ func (is *InvoiceService) GetInvoiceSearch(ctx context.Context, invoiceUrl, invo
 		CreatedAt:     invoice.CreatedAt,
 		UpdatedAt:     invoice.UpdatedAt,
 		Country:       invoice.AddressCountry.String,
-		CreatedBy:     &invoice.CreatedBy,
-		Items:         items,
+		// CreatedBy:     &invoice.CreatedBy, // TODO: check something here
+		Items: items,
 	}
 
 	if invoice.PaidAt.Valid {
