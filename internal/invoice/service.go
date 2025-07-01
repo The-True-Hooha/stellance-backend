@@ -277,6 +277,7 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 			InvoiceStatusCancelled: true,
 			InvoiceStatusRefunded:  true,
 			InvoiceStatusViewed:    true,
+			InvoiceStatusPending:   true,
 		}
 		if !validStatuses[dto.Status] {
 			return &utils.ApiResponse{
