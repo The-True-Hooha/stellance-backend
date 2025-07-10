@@ -24,7 +24,6 @@ import (
 )
 
 var (
-	userCacheTime         = 1 * time.Hour
 	emailCacheTime        = 24 * 7 * time.Hour
 	ErrUserAlreadyExists  = errors.New("user already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials")
@@ -228,20 +227,8 @@ func (config *AuthServiceConfig) Login(ctx context.Context, dto AuthRequestDto) 
 			StatusCode: http.StatusOK,
 			Message:    "Login successful",
 			Data: &AuthLoginResponseDto{
-				User: &user.User{
-					Id:           existingUser.ID,
-					FirstName:    existingUser.FirstName,
-					LastName:     existingUser.LastName,
-					Email:        existingUser.Email,
-					BusinessName: existingUser.BusinessName,
-					PhoneNumber:  existingUser.PhoneNumber,
-					Country:      &existingUser.Country,
-					Wallet:       wallet,
-				},
 				AccessToken:     accessToken,
 				ExpiresIn:       time.Now().Add(1 * time.Hour).Unix(),
-				EmailVerified:   existingUser.EmailVerified,
-				ProfileComplete: existingUser.FirstName != nil && existingUser.LastName != nil,
 			},
 		}
 	}
@@ -359,10 +346,6 @@ func (config *AuthServiceConfig) ValidateEmail(ctx context.Context, token, email
 		StatusCode: http.StatusOK,
 		Message:    fmt.Sprintf("Welcome %s! Your email has been verified successfully.", email),
 		Data: &AuthLoginResponseDto{
-			User: &user.User{
-				Id:    user_.ID,
-				Email: email,
-			},
 			AccessToken:     accessToken,
 			ExpiresIn:       time.Now().Add(1 * time.Hour).Unix(),
 			EmailVerified:   true,
