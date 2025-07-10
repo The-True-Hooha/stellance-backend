@@ -64,7 +64,7 @@ func (s *UserService) FindUserByEmail(ctx context.Context, email string) (*UserP
 		user.PhoneNumber = &phone_number.String
 	}
 	if country_.Valid {
-		user.Country = country_.String
+		user.Country = &country_.String
 	}
 
 	if err != nil {
@@ -251,6 +251,7 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 		lastName     sql.NullString
 		businessName sql.NullString
 		phoneNumber  sql.NullString
+		country  sql.NullString
 	)
 
 	const query = `
@@ -272,7 +273,7 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 		&lastName,
 		&businessName,
 		&phoneNumber,
-		&profile.Country,
+		&country,
 		&profile.EmailVerified,
 		&profile.IsActive,
 		&profile.CreatedAt,
@@ -296,6 +297,9 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 
 	if phoneNumber.Valid {
 		profile.PhoneNumber = &phoneNumber.String
+	}
+	if country.Valid {
+		profile.Country = &country.String
 	}
 
 	if err != nil {
