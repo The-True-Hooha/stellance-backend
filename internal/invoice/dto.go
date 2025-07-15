@@ -63,6 +63,8 @@ type InvoiceResponse struct {
 	PaidAt             *time.Time           `json:"paid_at,omitempty"`
 	Items              []InvoiceItems       `json:"items"`
 	CreatedBy          InvoiceSenderDetails `json:"createdBy"`
+	Approved           *bool                `json:"approved"`
+	ReviewDate         *time.Time           `json:"review_date"`
 }
 
 type InvoiceListResponseDto struct {
