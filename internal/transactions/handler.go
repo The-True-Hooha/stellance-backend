@@ -132,8 +132,10 @@ func (th *TransactionHandler) GetTransactionCashFlow(w http.ResponseWriter, r *h
     }
     
     var query TransactionCashFlowQuery
-    query.From = r.URL.Query().Get("from")
-    query.To = r.URL.Query().Get("to")
+	query = TransactionCashFlowQuery{
+		From: r.URL.Query().Get("from"),
+		To: r.URL.Query().Get("to"),
+	}
     
     response := th.service.GetTransactionCashFlow(r.Context(), userID, query)
     

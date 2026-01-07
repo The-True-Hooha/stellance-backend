@@ -6,6 +6,19 @@
 @parentCommentId = 9a1b2c3d-4e5f-6789-abcd-ef0123456789
 @CommentId = 9a1b2c3d-4e5f-6789-abcd-ef0123456789
 
+@invoiceItems = [
+  {
+    "name": "Design Work",
+    "quantity": 1,
+    "unit_price": 50000
+  },
+  {
+    "name": "Backend Development",
+    "quantity": 2,
+    "unit_price": 75000
+  }
+]
+
 
 ###
 # Create a new comment (authenticated)
@@ -51,6 +64,25 @@ GET {{baseUrl}}/comments/{{CommentId}}
 Accept: application/json
 Authorization: Bearer {{jwt}}
 
+###
+
+# returns the invoice status data for the pie chart
+GET {{baseUrl}}/invoice/overview
+# query params {month=july} or {month=jul}
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
+# returns the transaction card data on the overview page
+GET {{baseUrl}}/transaction/stats
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
+# returns the cash inflow data for the line graph on the overview page
+GET {{baseUrl}}/transaction/inflow
+# query params = {from, to} in YYYY-MM-DD
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
 
 ### 
 # update a comment by the id
@@ -72,3 +104,53 @@ Authorization: Bearer {{jwt}}
 {
   "emails": [""]
 }
+
+###
+# still follow the post body from the previous impl, just use form data instead
+# and add fields for the template_id(required), logo
+POST {{baseUrl}}/invoice
+Authorization: Bearer {{jwt}}
+Content-Type: multipart/form-data
+
+--boundary
+Content-Disposition: form-data; name="title"
+
+Website Development Invoice
+--boundary
+Content-Disposition: form-data; name="payer_name"
+
+Mike Base
+--boundary
+Content-Disposition: form-data; name="payer_email"
+
+mike@example.com
+--boundary
+Content-Disposition: form-data; name="country"
+
+NG
+--boundary
+Content-Disposition: form-data; name="due_date"
+
+2026-02-15
+--boundary
+Content-Disposition: form-data; name="template_id"
+
+default
+--boundary
+Content-Disposition: form-data; name="service_fee"
+
+1500
+--boundary
+Content-Disposition: form-data; name="make_default"
+
+true
+--boundary
+Content-Disposition: form-data; name="invoice_items"
+
+{{invoiceItems}}
+--boundary
+Content-Disposition: form-data; name="logo"; filename="logo.png"
+Content-Type: image/png
+
+< ./logo.png
+--boundary--

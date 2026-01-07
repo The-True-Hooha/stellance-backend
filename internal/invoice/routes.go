@@ -22,7 +22,6 @@ func RegisterInvoiceRoutes(apiV1 *httpx.RouteGroup, router *http.ServeMux, invoi
 	invoiceGroup.HandleFunc("POST /{id}", authMiddleware.Authenticate(http.HandlerFunc(invoiceHandler.EditInvoiceHandler)).ServeHTTP)
 	invoiceGroup.HandleFunc("POST /send/{id}", authMiddleware.Authenticate(http.HandlerFunc(invoiceHandler.SendInvoice)).ServeHTTP)
 	invoiceGroup.HandleFunc("GET /stats", authMiddleware.Authenticate(http.HandlerFunc(invoiceHandler.GetInvoiceStatsHandler)).ServeHTTP)
-	//NOTE - FOR THE PIE CHART
 	invoiceGroup.HandleFunc("GET /overview", authMiddleware.Authenticate(http.HandlerFunc(invoiceHandler.GetInvoicesByStatus)).ServeHTTP)
 
 }
