@@ -36,7 +36,7 @@ type InvoiceService struct {
 	redis       *redis.Client
 	jwt         *jwt_.JwtTokenServiceConfig
 	mail        *mail.Mailer
-	logoService logo.LogoService
+	logoService *logo.LogoService
 }
 
 func NewInvoiceService() *InvoiceService {
@@ -46,7 +46,7 @@ func NewInvoiceService() *InvoiceService {
 		redis:       config.GetAppContainer().Redis,
 		jwt:         jwt_.JwtTokenService(),
 		mail:        mail.NewMailer(),
-		logoService: NewInvoiceService().logoService,
+		logoService: logo.NewLogoService(),
 	}
 }
 
