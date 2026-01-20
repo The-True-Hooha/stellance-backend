@@ -122,7 +122,7 @@ Content-Type: application/json
 Authorization: Bearer {{jwt}}
 
 {
-  "emails": ["davidhero125@gmail.com", "davidhero125+0@gmail.com"]
+  "emails": ["man1@test.com", "man2@test.com"]
 }
 
 ###
