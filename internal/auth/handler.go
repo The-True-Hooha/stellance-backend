@@ -133,7 +133,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	id, ok := utils.GetUserIDFromContext(ctx)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, "unauthorized here", http.StatusUnauthorized)
 		return
 	}
 	
