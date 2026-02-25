@@ -32,11 +32,11 @@ Content-Type: application/json
 Authorization: Bearer {{jwt}}
 
 {
-    "old_password": "test1234",
-    "new_password": "computerman323."
+    "old_password": "ComputerMan2026.",
+    "new_password": "#ComputerMan2026"
 }
-####
 
+####
 POST {{baseUrl}}/auth/social
 Accept: application/json
 Content-Type: application/json
