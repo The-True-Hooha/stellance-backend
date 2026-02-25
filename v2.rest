@@ -1,0 +1,91 @@
+@baseUrl = http://localhost:4000/api/v1
+
+@jwt = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMTg0MjI3YTUtNTQyZi00YTUwLTk5YTgtZGFiZjAyMTdiN2ZmIiwiZW1haWwiOiJkYXZpZGhlcm8xMjVAZ21haWwuY29tIiwicm9sZSI6InVzZXIiLCJpc3MiOiJzdGVsbGFuY2UiLCJzdWIiOiIxODQyMjdhNS01NDJmLTRhNTAtOTlhOC1kYWJmMDIxN2I3ZmYiLCJhdWQiOlsic3RlbGxhbmNlOndlYiJdLCJleHAiOjE3NzIxMjQ1MjgsIm5iZiI6MTc3MjAzODEyOCwiaWF0IjoxNzcyMDM4MTI4fQ.w76C_WcFqyZDFtStrn8SrA354FjmPBbVuk52iumGHeI
+@name = mike base
+@userId = 184227a5-542f-4a50-99a8-dabf0217b7ff
+@invoiceId = 23ae52b9-d39a-4c53-9867-ff4125a54a82
+@notificationId = 23ae52b9-d39a-4c53-9867-ff4125a54a82
+@parentCommentId = ebc238aa-8923-4131-a5a1-6c14fde5ba98
+@CommentId = ebc238aa-8923-4131-a5a1-6c14fde5ba98
+
+@invoice_items = [
+  {
+    "invoice_type": "per_unit",
+    "description": "Design Work",
+    "quantity": 1,
+    "unit_price": 50000,
+    "amount": 50000
+  },
+  {
+    "invoice_type": "per_unit",
+    "description": "Backend Development",
+    "quantity": 2,
+    "unit_price": 75000,
+    "amount": 150000
+  }
+]
+
+####
+POST {{baseUrl}}/auth/change-password
+Accept: application/json
+Content-Type: application/json
+Authorization: Bearer {{jwt}}
+
+{
+    "old_password": "test1234",
+    "new_password": "computerman323."
+}
+####
+
+POST {{baseUrl}}/auth/social
+Accept: application/json
+Content-Type: application/json
+Authorization: Bearer {{jwt}}
+
+{
+    "email": "computerman@gmail.com",
+    "provider_id": "computerman323."
+}
+
+####
+# to reset the password, send this first to get otp delivered to email before resetting password with api below
+GET {{baseUrl}}/reset?email=computerman@gmail.com
+Accept: application/json
+Content-Type: application/json
+Authorization: Bearer {{jwt}}
+
+
+####
+POST {{baseUrl}}/auth/reset-password
+Accept: application/json
+Content-Type: application/json
+Authorization: Bearer {{jwt}}
+
+{
+    "email": "computerman@gmail.com",
+    "password": "computerman323.",
+    "confirm_password": "computerman323.",
+    "otp": "33eerr"
+}
+
+####
+# search invoice
+GET {{baseUrl}}/invoice?search=0011
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
+####
+# get all the notifications
+GET {{baseUrl}}/notifications
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
+####
+PATCH {{baseUrl}}/notifications/{{notificationId}}?viewed=true
+Accept: application/json
+Authorization: Bearer {{jwt}}
+
+####
+DELETE {{baseUrl}}/notifications/{{notificationId}}
+Accept: application/json
+Authorization: Bearer {{jwt}}

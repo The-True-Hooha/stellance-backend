@@ -401,6 +401,19 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 		countArgs = append(countArgs, dto.Status)
 	}
 
+	if dto.Search != "" {
+		searchTerm := "%" + strings.TrimSpace(dto.Search) + "%"
+		argCount++
+		whereClause += fmt.Sprintf(` AND (
+		i.invoice_number ILIKE $%d OR
+		i.payer_email ILIKE $%d OR
+		i.title ILIKE $%d OR
+		i.payer_name ILIKE $%d OR
+		i.template_id ILIKE $%d
+	)`, argCount, argCount, argCount, argCount, argCount)
+		countArgs = append(countArgs, searchTerm)
+	}
+
 	var totalItems int
 	err = tx.QueryRow(ctx, fmt.Sprintf(countQuery, whereClause), countArgs...).Scan(&totalItems)
 	if err != nil {
@@ -410,6 +423,7 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 			Message:    "Failed to fetch invoices",
 		}
 	}
+
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		is.log.Error("failed to fetch invoices", "error", err)
@@ -436,9 +450,10 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 			approvedDate       sql.NullTime
 			rejectedDate       sql.NullTime
 			reviewDate         sql.NullTime
+			relevance          float64
 		)
 
-		err := rows.Scan(
+		scanDest := []interface{}{
 			&invoice.ID,
 			&invoice.InvoiceNumber,
 			&invoice.InvoiceURL,
@@ -462,7 +477,16 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 			&logoID,
 			&notes,
 			&invoice.TemplateID,
+		}
+
+		if dto.Search != "" {
+			scanDest = append(scanDest, &relevance)
+		}
+
+		err := rows.Scan(
+			scanDest...,
 		)
+
 		if err != nil {
 			is.log.Error("failed to scan invoice", "error", err)
 			continue
@@ -534,7 +558,7 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 		Invoice: invoices,
 		Meta: PaginationMeta{
 			Page:              dto.Page,
-			PageCount:         dto.Count,
+			PageCount:         len(invoices),
 			TotalInvoiceCount: totalItems,
 			TotalPages:        totalPages,
 		},
