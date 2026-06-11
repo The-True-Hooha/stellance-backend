@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/The-True-Hooha/stellance-backend/internal/activitylog"
 	"github.com/The-True-Hooha/stellance-backend/internal/user"
 	"github.com/The-True-Hooha/stellance-backend/internal/wallet"
 	"github.com/The-True-Hooha/stellance-backend/mail"
@@ -234,6 +236,8 @@ func (config *AuthServiceConfig) Login(ctx context.Context, dto AuthRequestDto) 
 		}
 
 		profileComplete := existingUser.FirstName != nil && existingUser.LastName != nil
+
+		activitylog.Log(ctx, config.postgres, config.log, existingUser.ID, activitylog.ActionLogin, "", "", "")
 
 		return &utils.ApiResponse{
 			StatusCode: http.StatusOK,
@@ -482,10 +486,13 @@ func (as *AuthServiceConfig) RequestPasswordReset(ctx context.Context, email str
 }
 
 func (m *AuthServiceConfig) GenerateOTP() string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	otp := ""
 	for i := 0; i < 6; i++ {
-		otp += fmt.Sprintf("%d", r.Intn(10))
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			panic("failed to generate secure random number for OTP")
+		}
+		otp += n.String()
 	}
 	return otp
 }

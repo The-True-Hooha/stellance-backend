@@ -14,11 +14,15 @@ import (
 	"syscall"
 	"time"
 
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
+	"github.com/The-True-Hooha/stellance-backend/internal/admin"
 	"github.com/The-True-Hooha/stellance-backend/internal/auth"
 	"github.com/The-True-Hooha/stellance-backend/internal/invoice"
 	"github.com/The-True-Hooha/stellance-backend/internal/invoice_comments"
 	"github.com/The-True-Hooha/stellance-backend/internal/middleware"
 	"github.com/The-True-Hooha/stellance-backend/internal/notifications"
+	"github.com/The-True-Hooha/stellance-backend/internal/recurring"
 	"github.com/The-True-Hooha/stellance-backend/internal/transactions"
 	"github.com/The-True-Hooha/stellance-backend/internal/user"
 	"github.com/The-True-Hooha/stellance-backend/internal/wallet"
@@ -26,6 +30,7 @@ import (
 	"github.com/The-True-Hooha/stellance-backend/pkg/config/cors_config"
 	"github.com/The-True-Hooha/stellance-backend/pkg/httpx"
 	"github.com/The-True-Hooha/stellance-backend/pkg/logger"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Server struct {
@@ -84,6 +89,9 @@ func (server *Server) AddHttpRoutes() {
 	apiV1 := httpx.NewRouteGroup(server.router, "/api/v1")
 	apiV1.HandleFunc("GET /health", runHealthCheck)
 	apiV1.HandleFunc("GET /key", generateKey)
+	server.router.Handle("/docs/", httpSwagger.Handler(
+		httpSwagger.URL("/docs/doc.json"),
+	))
 
 	authService := auth.NewAuthService()
 	auth.RegisterAuthRoutes(apiV1, server.router, authService)
@@ -105,6 +113,56 @@ func (server *Server) AddHttpRoutes() {
 	ic := invoice_comments.NewInvoiceCommentService()
 	invoice_comments.RegisterInvoiceCommentRoutes(apiV1, server.router, ic)
 
+	recurringService := recurring.NewRecurringService()
+	recurring.RegisterRecurringRoutes(apiV1, server.router, recurringService)
+	go startRecurringScheduler(recurringService)
+	go startOverdueCron(config.GetAppContainer().Postgres, server.logger)
+
+	adminService := admin.NewAdminService()
+	admin.RegisterAdminRoutes(apiV1, server.router, adminService)
+
+	seedStellarNetworkConfig(adminService)
+}
+
+func startRecurringScheduler(svc *recurring.RecurringService) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := svc.GenerateDue(ctx); err != nil {
+			cancel()
+			continue
+		}
+		cancel()
+	}
+}
+
+func startOverdueCron(db *pgxpool.Pool, log *slog.Logger) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		tag, err := db.Exec(ctx,
+			`UPDATE invoice SET status = 'overdue', updated_at = NOW()
+			 WHERE status NOT IN ('paid','cancelled','overdue')
+			 AND due_date < NOW()`)
+		if err != nil {
+			log.Error("failed to mark overdue invoices", "error", err)
+		} else if tag.RowsAffected() > 0 {
+			log.Info("marked invoices as overdue", "count", tag.RowsAffected())
+		}
+		cancel()
+	}
+}
+
+func seedStellarNetworkConfig(adminService *admin.AdminService) {
+	ctx := context.Background()
+	var exists int
+	db := config.GetAppContainer().Postgres
+	db.QueryRow(ctx, `SELECT COUNT(*) FROM system_config WHERE key = 'stellar_network'`).Scan(&exists)
+	if exists == 0 {
+		adminService.SetStellarNetwork(ctx, "testnet", "")
+	}
 }
 
 func (server *Server) StartHttpServer(ctx context.Context) {
