@@ -432,6 +432,13 @@ func GetStellarStage() string {
 	return "mainnet"
 }
 
+func USDCIssuer(stage string) string {
+	if stage == "testnet" {
+		return "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	}
+	return "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+}
+
 func NullStringPtr(ns sql.NullString) *string {
 	if ns.Valid {
 		return &ns.String

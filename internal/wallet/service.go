@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,9 +19,9 @@ import (
 
 	"github.com/The-True-Hooha/stellance-backend/internal/activitylog"
 	"github.com/The-True-Hooha/stellance-backend/internal/notifications"
+	"github.com/The-True-Hooha/stellance-backend/internal/payments"
 	"github.com/The-True-Hooha/stellance-backend/internal/transactions"
 	"github.com/The-True-Hooha/stellance-backend/internal/user"
-	"github.com/The-True-Hooha/stellance-backend/mail"
 	"github.com/The-True-Hooha/stellance-backend/pkg/config"
 	jwt_ "github.com/The-True-Hooha/stellance-backend/pkg/jwt"
 	"github.com/The-True-Hooha/stellance-backend/pkg/utils"
@@ -45,6 +46,7 @@ type WalletService struct {
 	secureKey     []byte
 	networkURL    string
 	horizonClient *horizonclient.Client
+	payments      *payments.PaymentService
 }
 
 func NewWalletService() *WalletService {
@@ -76,6 +78,7 @@ func NewWalletService() *WalletService {
 		networkURL:    url,
 		networkPass:   networkPassPhrase,
 		horizonClient: &horizonclient.Client{HorizonURL: url},
+		payments:      payments.NewPaymentService(),
 	}
 }
 
@@ -431,10 +434,7 @@ func (ws *WalletService) GetAccountBalance(ctx context.Context, address, walletI
 }
 
 func (ws *WalletService) getUSDCIssuer() string {
-	if ws.stage == "testnet" {
-		return "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
-	}
-	return "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	return utils.USDCIssuer(ws.stage)
 }
 
 func (ws *WalletService) updateWalletBalance(ctx context.Context, walletID string, usdc_balance, xlm_balance float64) {
@@ -861,28 +861,24 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "wallet not found"}
 	}
 
-	// fetch invoice amount + vendor wallet address
-	var invoiceTotal float64
-	var vendorAddress string
-	var invoiceStatus string
-	err := ws.postgres.QueryRow(ctx, `
-		SELECT i.total, i.status::text, w.address
-		FROM invoice i
-		JOIN wallets w ON w.user_id = i.created_by_id AND w.is_primary = TRUE AND w.is_active = TRUE
-		WHERE i.id = $1
-	`, dto.InvoiceID).Scan(&invoiceTotal, &invoiceStatus, &vendorAddress)
-	if err != nil {
-		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "invoice not found or vendor has no wallet"}
+	req, err := ws.payments.EnsurePaymentRequest(ctx, dto.InvoiceID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "invoice not found"}
+	case errors.Is(err, payments.ErrNoRecipientWallet):
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "vendor has no wallet"}
+	case errors.Is(err, payments.ErrInvoiceNotPayable):
+		return &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invoice cannot be paid in its current state"}
+	case err != nil:
+		ws.log.Error("failed to load payment request", "error", err, "invoice_id", dto.InvoiceID)
+		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to load invoice payment details"}
 	}
-	if invoiceStatus == "paid" {
-		return &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invoice is already paid"}
+	if req.InvoiceStatus == "payment_detected" {
+		return &utils.ApiResponse{StatusCode: http.StatusConflict, Message: "a payment for this invoice is already being verified"}
 	}
-	if invoiceStatus == "cancelled" {
-		return &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invoice is cancelled"}
-	}
-
-	destAmount := strconv.FormatFloat(invoiceTotal, 'f', 7, 64)
-	destAssetCode := "USDC"
+	vendorAddress := req.Recipient
+	destAmount := req.Amount
+	destAssetCode := req.Asset
 
 	kp, err := ws.getKeyPairForWallet(ctx, walletID)
 	if err != nil {
@@ -901,7 +897,7 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 			Amount:      destAmount,
 			Asset:       ws.assetFromCode(destAssetCode),
 		}
-		txHash, feeXLM, err = ws.buildAndSubmit(ctx, kp, &op, dto.InvoiceID)
+		txHash, feeXLM, err = ws.buildAndSubmit(ctx, kp, &op, req.PaymentReference)
 		sourceAmount = destAmount
 	} else {
 		path, srcAmt, findErr := ws.findPaths(ctx, payerAddress, vendorAddress, destAssetCode, destAmount)
@@ -918,64 +914,42 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 			DestAmount:  destAmount,
 			Path:        path,
 		}
-		txHash, feeXLM, err = ws.buildAndSubmit(ctx, kp, &op, dto.InvoiceID)
+		txHash, feeXLM, err = ws.buildAndSubmit(ctx, kp, &op, req.PaymentReference)
 	}
 	if err != nil {
 		return &utils.ApiResponse{StatusCode: http.StatusBadGateway, Message: "payment failed: " + err.Error()}
 	}
 
-	// record transaction
-	ws.postgres.Exec(ctx, `
-		INSERT INTO transactions (invoice_id, wallet_id, transaction_hash, amount, currency, status, token_type, transaction_type, user_id, confirmed_at, source_asset, source_amount)
-		VALUES ($1, $2, $3, $4, 'usdc', 'confirmed', 'usdc', 'path_payment', $5, NOW(), $6, $7)`,
-		dto.InvoiceID, walletID, txHash, invoiceTotal, userID, dto.SourceAsset, sourceAmount,
-	)
-
-	// mark invoice paid
-	ws.postgres.Exec(ctx, `
-		UPDATE invoice SET status = 'paid', paid_at = NOW(), updated_at = NOW() WHERE id = $1`,
-		dto.InvoiceID,
-	)
+	// The payment settles only after the chain data is verified against the invoice. If Horizon has
+	// not ingested the ledger yet, the payment monitor settles it on its next pass.
+	paymentStatus := "detected"
+	if records, verr := ws.payments.VerifyTransaction(ctx, txHash); verr != nil {
+		ws.log.Warn("payment submitted but not yet verified", "error", verr, "transaction_hash", txHash)
+	} else {
+		for _, r := range records {
+			if r.InvoiceID != nil && *r.InvoiceID == dto.InvoiceID {
+				paymentStatus = r.VerificationStatus
+			}
+		}
+	}
+	if dto.SourceAsset != destAssetCode {
+		if _, uerr := ws.postgres.Exec(ctx, `
+			UPDATE transactions SET transaction_type = 'path_payment', source_asset = $2, source_amount = $3::text::numeric
+			WHERE transaction_hash = $1`, txHash, dto.SourceAsset, sourceAmount); uerr != nil {
+			ws.log.Warn("failed to record path payment source", "error", uerr, "transaction_hash", txHash)
+		}
+	}
 	activitylog.Log(ctx, ws.postgres, ws.log, userID, activitylog.ActionWalletPayment, activitylog.EntityWallet, walletID, "")
 	ws.redis.Del(ctx, ws.GetWalletCacheKey(walletID))
 	go notifications.NewNotificationService().CreateNewNotification(context.Background(), notifications.CreateNotificationDto{
 		Title:  "Payment Sent",
 		UserId: userID,
-		Body:   fmt.Sprintf("Your payment of %.2f USDC for invoice %s was successful. Tx: %s", invoiceTotal, dto.InvoiceID, txHash),
+		Body:   fmt.Sprintf("Your payment of %s %s for invoice %s was submitted. Tx: %s", destAmount, destAssetCode, dto.InvoiceID, txHash),
 	})
-
-	// notify invoice creator
-	go func() {
-		var creatorEmail, creatorName, invoiceNumber string
-		var total float64
-		err := ws.postgres.QueryRow(context.Background(), `
-			SELECT u.email, COALESCE(u.first_name,''), i.invoice_number, i.total
-			FROM invoice i JOIN users u ON u.id = i.created_by_id WHERE i.id = $1`,
-			dto.InvoiceID,
-		).Scan(&creatorEmail, &creatorName, &invoiceNumber, &total)
-		if err != nil {
-			ws.log.Warn("failed to fetch creator info for payment email", "error", err)
-			return
-		}
-		var payerEmail string
-		ws.postgres.QueryRow(context.Background(),
-			`SELECT email FROM users WHERE id = $1`, userID,
-		).Scan(&payerEmail)
-		mail.NewMailer().SendPaymentConfirmedEmail(mail.PaymentConfirmedEmailData{
-			CreatorEmail:  creatorEmail,
-			CreatorName:   creatorName,
-			PayerEmail:    payerEmail,
-			InvoiceNumber: invoiceNumber,
-			Total:         fmt.Sprintf("%.2f", total),
-			Currency:      "USDC",
-			TxHash:        txHash,
-			DashboardURL:  "https://usestellance.com/dashboard",
-		})
-	}()
 
 	return &utils.ApiResponse{
 		StatusCode: http.StatusOK,
-		Message:    "invoice paid successfully",
+		Message:    "payment submitted",
 		Data: PathPaymentResult{
 			TransactionHash: txHash,
 			SourceAsset:     dto.SourceAsset,
@@ -984,6 +958,7 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 			DestAmount:      destAmount,
 			Destination:     vendorAddress,
 			Fee:             feeXLM,
+			PaymentStatus:   paymentStatus,
 		},
 	}
 }

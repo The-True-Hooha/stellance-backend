@@ -2135,6 +2135,149 @@ const docTemplate = `{
                 }
             }
         },
+        "/payments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments-v2"
+                ],
+                "summary": "Payments received on the user's wallets (verified, invalid, unmatched, failed) (v2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "verification status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size, max 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/invoice/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments-v2"
+                ],
+                "summary": "Payment request, status and payment records of an invoice (v2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/request/{invoice_url}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments-v2"
+                ],
+                "summary": "Payment instructions for an invoice, by invoice url (v2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice URL",
+                        "name": "invoice_url",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments-v2"
+                ],
+                "summary": "Re-check a Stellar transaction against invoices (v2)",
+                "parameters": [
+                    {
+                        "description": "Transaction hash",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/payments.VerifyTransactionDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.ApiResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/recurring": {
             "get": {
                 "security": [
@@ -3338,21 +3481,10 @@ const docTemplate = `{
         "invoice.MarkInvoicePaidDTO": {
             "type": "object",
             "required": [
-                "amount",
                 "transaction_hash"
             ],
             "properties": {
-                "amount": {
-                    "type": "number"
-                },
-                "network_fee": {
-                    "type": "number",
-                    "minimum": 0
-                },
                 "transaction_hash": {
-                    "type": "string"
-                },
-                "wallet_id": {
                     "type": "string"
                 }
             }
@@ -3447,6 +3579,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "payments.VerifyTransactionDTO": {
+            "type": "object",
+            "required": [
+                "transaction_hash"
+            ],
+            "properties": {
+                "transaction_hash": {
                     "type": "string"
                 }
             }
@@ -3642,6 +3785,9 @@ const docTemplate = `{
                 },
                 "fee_xlm": {
                     "type": "number"
+                },
+                "payment_status": {
+                    "type": "string"
                 },
                 "source_amount": {
                     "type": "string"

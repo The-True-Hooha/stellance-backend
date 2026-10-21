@@ -22,6 +22,7 @@ import (
 	"github.com/The-True-Hooha/stellance-backend/internal/invoice_comments"
 	"github.com/The-True-Hooha/stellance-backend/internal/middleware"
 	"github.com/The-True-Hooha/stellance-backend/internal/notifications"
+	"github.com/The-True-Hooha/stellance-backend/internal/payments"
 	"github.com/The-True-Hooha/stellance-backend/internal/recurring"
 	"github.com/The-True-Hooha/stellance-backend/internal/transactions"
 	"github.com/The-True-Hooha/stellance-backend/internal/user"
@@ -118,6 +119,10 @@ func (server *Server) AddHttpRoutes() {
 	go startRecurringScheduler(recurringService)
 	go startOverdueCron(config.GetAppContainer().Postgres, server.logger)
 
+	paymentService := payments.NewPaymentService()
+	payments.RegisterPaymentRoutes(apiV1, server.router, paymentService)
+	go startPaymentMonitor(paymentService, server.logger)
+
 	adminService := admin.NewAdminService()
 	admin.RegisterAdminRoutes(apiV1, server.router, adminService)
 
@@ -144,7 +149,7 @@ func startOverdueCron(db *pgxpool.Pool, log *slog.Logger) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		tag, err := db.Exec(ctx,
 			`UPDATE invoice SET status = 'overdue', updated_at = NOW()
-			 WHERE status NOT IN ('paid','cancelled','overdue')
+			 WHERE status NOT IN ('paid','cancelled','overdue','refunded','payment_detected','invalid_payment','expired')
 			 AND due_date < NOW()`)
 		if err != nil {
 			log.Error("failed to mark overdue invoices", "error", err)
@@ -152,6 +157,23 @@ func startOverdueCron(db *pgxpool.Pool, log *slog.Logger) {
 			log.Info("marked invoices as overdue", "count", tag.RowsAffected())
 		}
 		cancel()
+	}
+}
+
+func startPaymentMonitor(svc *payments.PaymentService, log *slog.Logger) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		runStage := func(name string, timeout time.Duration, fn func(context.Context) error) {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			if err := fn(ctx); err != nil {
+				log.Error("payment monitor stage failed", "stage", name, "error", err)
+			}
+		}
+		runStage("poll", 2*time.Minute, svc.Poll)
+		runStage("recover", 30*time.Second, svc.RecoverUnfinished)
+		runStage("expire", 30*time.Second, svc.ExpireInvoices)
 	}
 }
 

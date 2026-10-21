@@ -28,6 +28,7 @@ type PathPaymentResult struct {
 	DestAmount      string  `json:"dest_amount"`
 	Destination     string  `json:"destination"`
 	Fee             float64 `json:"fee_xlm"`
+	PaymentStatus   string  `json:"payment_status,omitempty"`
 }
 
 type WalletResponseDto struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -17,6 +18,7 @@ import (
 	"github.com/The-True-Hooha/stellance-backend/internal/activitylog"
 	"github.com/The-True-Hooha/stellance-backend/internal/logo"
 	"github.com/The-True-Hooha/stellance-backend/internal/notifications"
+	"github.com/The-True-Hooha/stellance-backend/internal/payments"
 	"github.com/The-True-Hooha/stellance-backend/internal/user"
 	"github.com/The-True-Hooha/stellance-backend/mail"
 	"github.com/The-True-Hooha/stellance-backend/pkg/config"
@@ -24,6 +26,7 @@ import (
 	"github.com/The-True-Hooha/stellance-backend/pkg/utils"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -330,14 +333,17 @@ func (is *InvoiceService) validateAndCalculateInvoice(dto CreateInvoiceDTO) (sub
 func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFiltersDto, user_id string) *utils.ApiResponse {
 	if dto.Status != "" {
 		validStatuses := map[InvoiceStatus]bool{
-			InvoiceStatusDraft:     true,
-			InvoiceStatusSent:      true,
-			InvoiceStatusViewed:    true,
-			InvoiceStatusPaid:      true,
-			InvoiceStatusOverdue:   true,
-			InvoiceStatusCancelled: true,
-			InvoiceStatusRefunded:  true,
-			InvoiceStatusPending:   true,
+			InvoiceStatusDraft:            true,
+			InvoiceStatusSent:             true,
+			InvoiceStatusViewed:           true,
+			InvoiceStatusPaid:             true,
+			InvoiceStatusOverdue:          true,
+			InvoiceStatusCancelled:        true,
+			InvoiceStatusRefunded:         true,
+			InvoiceStatusPending:          true,
+			InvoiceStatusPaymentDetected:  true,
+			InvoiceStatusInvalidPayment:   true,
+			InvoiceStatusExpired:          true,
 		}
 		if !validStatuses[dto.Status] {
 			return &utils.ApiResponse{
@@ -1656,6 +1662,13 @@ func (is *InvoiceService) DeleteInvoice(ctx context.Context, userId, invoiceId s
 				}
 			}
 		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return &utils.ApiResponse{
+				StatusCode: http.StatusConflict,
+				Message:    "Cannot delete invoice with payment records",
+			}
+		}
 		return &utils.ApiResponse{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "Failed to delete invoice",
@@ -1857,7 +1870,11 @@ func (is *InvoiceService) SendInvoice(ctx context.Context, userId, invoiceId str
 	const query string = `
 		WITH invoice_update AS (
 			UPDATE invoice 
-			SET status = 'sent', updated_at = NOW()
+			SET status = 'sent', updated_at = NOW(),
+				recipient_address = COALESCE(recipient_address, (
+					SELECT w.address FROM wallets w
+					WHERE w.user_id = $2 AND w.chain = 'stellar' AND w.is_primary AND w.is_active
+					LIMIT 1))
 			WHERE id = $1 
 				AND created_by_id = $2 
 				AND status IN ('draft', 'viewed')
@@ -2053,7 +2070,8 @@ func (is *InvoiceService) ReviewInvoice(ctx context.Context, invoiceId string, a
 				updated_at = NOW()
 			WHERE id = $1 
 				AND approved = false 
-				AND rejected IS NOT TRUE`
+				AND rejected IS NOT TRUE
+				AND status IN ('draft', 'sent', 'viewed', 'pending', 'overdue')`
 	} else {
 		query = `
 			UPDATE invoice 
@@ -2063,7 +2081,8 @@ func (is *InvoiceService) ReviewInvoice(ctx context.Context, invoiceId string, a
 				updated_at = NOW()
 			WHERE id = $1 
 				AND approved = false 
-				AND rejected IS NOT TRUE`
+				AND rejected IS NOT TRUE
+				AND status IN ('draft', 'sent', 'viewed', 'pending', 'overdue')`
 	}
 
 	result, err := is.postgres.Exec(ctx, query, invoiceId)
@@ -2414,7 +2433,7 @@ func (is *InvoiceService) UpdateInvoice(ctx context.Context, invoiceID, userID s
 		SELECT id, status, created_by_id, logo_id
   		FROM invoice
 		WHERE id = $1
-    	AND status NOT IN ('sent', 'viewed', 'paid', 'overdue')
+    	AND status NOT IN ('sent', 'viewed', 'paid', 'overdue', 'payment_detected', 'invalid_payment', 'expired')
 	`
 
 	var existingInvoiceID, status, ownerID string
@@ -2794,85 +2813,46 @@ func (is *InvoiceService) GenerateInvoiceHTML(ctx context.Context, invoiceID, us
 	return html, r.invoiceNumber, nil
 }
 
+// MarkInvoicePaid re-checks the given transaction on Stellar. The invoice becomes paid only when the
+// chain data satisfies the invoice; the caller's claim alone never changes its status.
 func (is *InvoiceService) MarkInvoicePaid(ctx context.Context, invoiceID, userID string, dto MarkInvoicePaidDTO) *utils.ApiResponse {
-	var ownerID, status, invoiceNumber, currency string
-	var total float64
-	err := is.postgres.QueryRow(ctx, `
-		SELECT created_by_id, status, invoice_number, total, currency
-		FROM invoice WHERE id = $1
-	`, invoiceID).Scan(&ownerID, &status, &invoiceNumber, &total, &currency)
+	var ownerID string
+	err := is.postgres.QueryRow(ctx, `SELECT created_by_id FROM invoice WHERE id = $1`, invoiceID).Scan(&ownerID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "invoice not found"}
 		}
 		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to fetch invoice"}
 	}
-
 	if ownerID != userID {
 		return &utils.ApiResponse{StatusCode: http.StatusForbidden, Message: "access denied"}
 	}
 
-	if status == string(InvoiceStatusPaid) {
-		return &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invoice is already marked as paid"}
-	}
-	if status == string(InvoiceStatusCancelled) {
-		return &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "cannot mark a cancelled invoice as paid"}
-	}
-
-	tx, err := is.postgres.Begin(ctx)
+	records, err := payments.NewPaymentService().VerifyTransaction(ctx, dto.TransactionHash)
 	if err != nil {
-		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to begin transaction"}
-	}
-	defer tx.Rollback(ctx)
-
-	_, err = tx.Exec(ctx, `
-		UPDATE invoice SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-	`, invoiceID)
-	if err != nil {
-		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to update invoice status"}
+		is.log.Error("failed to verify transaction", "error", err, "invoice_id", invoiceID, "transaction_hash", dto.TransactionHash)
+		return &utils.ApiResponse{StatusCode: http.StatusBadGateway, Message: "could not verify the transaction on Stellar, try again shortly"}
 	}
 
-	walletID := sql.NullString{}
-	if dto.WalletID != "" {
-		walletID = sql.NullString{String: dto.WalletID, Valid: true}
+	var forInvoice []payments.PaymentRecord
+	for _, r := range records {
+		if r.InvoiceID != nil && *r.InvoiceID == invoiceID {
+			forInvoice = append(forInvoice, r)
+		}
 	}
-
-	var txID string
-	err = tx.QueryRow(ctx, `
-		INSERT INTO transactions (invoice_id, wallet_id, transaction_hash, amount, currency, status, network_fee, token_type, transaction_type, user_id, confirmed_at)
-		VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $5, 'payment', $7, NOW())
-		RETURNING id
-	`, invoiceID, walletID, dto.TransactionHash, dto.Amount, currency, dto.NetworkFee, userID).Scan(&txID)
-	if err != nil {
-		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to record transaction"}
+	for _, r := range forInvoice {
+		if r.VerificationStatus == string(payments.StatusVerified) {
+			activitylog.Log(ctx, is.postgres, is.log, userID, activitylog.ActionInvoicePaid, activitylog.EntityInvoice, invoiceID, "")
+			return &utils.ApiResponse{
+				StatusCode: http.StatusOK,
+				Message:    "payment verified on Stellar, invoice is paid",
+				Data:       map[string]any{"invoice_id": invoiceID, "status": "paid", "payment": r},
+			}
+		}
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return &utils.ApiResponse{StatusCode: http.StatusInternalServerError, Message: "failed to commit"}
-	}
-
-	is.DeleteFromRedisCache(ctx, invoiceID)
-
-	go func() {
-		bgCtx := context.Background()
-		notifBody := fmt.Sprintf("Invoice #%s has been marked as paid. Amount: %.2f %s", invoiceNumber, dto.Amount, strings.ToUpper(currency))
-		notifications.NewNotificationService().CreateNewNotification(bgCtx, notifications.CreateNotificationDto{
-			Title:  "Invoice Paid",
-			UserId: userID,
-			Body:   notifBody,
-		})
-	}()
-
-	activitylog.Log(ctx, is.postgres, is.log, userID, activitylog.ActionInvoicePaid, activitylog.EntityInvoice, invoiceID, "")
-
 	return &utils.ApiResponse{
-		StatusCode: http.StatusOK,
-		Message:    "invoice marked as paid",
-		Data: map[string]any{
-			"invoice_id":     invoiceID,
-			"transaction_id": txID,
-			"status":         "paid",
-		},
+		StatusCode: http.StatusUnprocessableEntity,
+		Message:    "transaction does not satisfy this invoice",
+		Data:       map[string]any{"invoice_id": invoiceID, "payments": forInvoice},
 	}
 }

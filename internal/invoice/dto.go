@@ -11,21 +11,24 @@ type InvoiceStatus string
 type TemplateIDType string
 
 const (
-	PerUnit                InvoiceType    = "per_unit"
-	PerHour                InvoiceType    = "per_hour"
-	InvoiceStatusDraft     InvoiceStatus  = "draft"
-	InvoiceStatusSent      InvoiceStatus  = "sent"
-	InvoiceStatusViewed    InvoiceStatus  = "viewed"
-	InvoiceStatusPaid      InvoiceStatus  = "paid"
-	InvoiceStatusOverdue   InvoiceStatus  = "overdue"
-	InvoiceStatusCancelled InvoiceStatus  = "cancelled"
-	InvoiceStatusRefunded  InvoiceStatus  = "refunded"
-	InvoiceStatusPending   InvoiceStatus  = "pending"
-	TemplateID1            TemplateIDType = "template_001"
-	TemplateID2            TemplateIDType = "template_002"
-	TemplateID3            TemplateIDType = "template_003"
-	TemplateID4            TemplateIDType = "template_004"
-	TemplateID5            TemplateIDType = "template_005"
+	PerUnit                      InvoiceType    = "per_unit"
+	PerHour                      InvoiceType    = "per_hour"
+	InvoiceStatusDraft           InvoiceStatus  = "draft"
+	InvoiceStatusSent            InvoiceStatus  = "sent"
+	InvoiceStatusViewed          InvoiceStatus  = "viewed"
+	InvoiceStatusPaid            InvoiceStatus  = "paid"
+	InvoiceStatusOverdue         InvoiceStatus  = "overdue"
+	InvoiceStatusCancelled       InvoiceStatus  = "cancelled"
+	InvoiceStatusRefunded        InvoiceStatus  = "refunded"
+	InvoiceStatusPending         InvoiceStatus  = "pending"
+	InvoiceStatusPaymentDetected InvoiceStatus  = "payment_detected"
+	InvoiceStatusInvalidPayment  InvoiceStatus  = "invalid_payment"
+	InvoiceStatusExpired         InvoiceStatus  = "expired"
+	TemplateID1                  TemplateIDType = "template_001"
+	TemplateID2                  TemplateIDType = "template_002"
+	TemplateID3                  TemplateIDType = "template_003"
+	TemplateID4                  TemplateIDType = "template_004"
+	TemplateID5                  TemplateIDType = "template_005"
 )
 
 type CreateInvoiceDTO struct {
@@ -149,10 +152,7 @@ type SendInvoiceDto struct {
 }
 
 type MarkInvoicePaidDTO struct {
-	TransactionHash string  `json:"transaction_hash" validate:"required"`
-	Amount          float64 `json:"amount" validate:"required,gt=0"`
-	NetworkFee      float64 `json:"network_fee" validate:"omitempty,gte=0"`
-	WalletID        string  `json:"wallet_id" validate:"omitempty,uuid"`
+	TransactionHash string `json:"transaction_hash" validate:"required,len=64,hexadecimal"`
 }
 
 type PDFInvoiceData struct {

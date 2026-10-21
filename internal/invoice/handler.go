@@ -32,7 +32,7 @@ func RegisterInvoiceFiltersValidation(v *validator.Validate) {
 	v.RegisterValidation("invoice_status", func(fl validator.FieldLevel) bool {
 		status := fl.Field().String()
 		switch status {
-		case "", "draft", "sent", "viewed", "paid", "overdue", "cancelled", "refunded":
+		case "", "draft", "sent", "viewed", "paid", "overdue", "cancelled", "refunded", "payment_detected", "invalid_payment", "expired":
 			return true
 		default:
 			return false
