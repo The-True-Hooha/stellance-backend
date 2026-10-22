@@ -76,7 +76,7 @@ func (h *WalletHandler) GetWalletHandler(w http.ResponseWriter, r *http.Request)
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /wallet/{id}/export [get]
+// @Router       /wallet/export/{id} [get]
 func (h *WalletHandler) ExportWalletHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id, ok := utils.GetUserIDFromContext(ctx)

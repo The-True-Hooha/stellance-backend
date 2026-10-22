@@ -934,7 +934,7 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 	}
 	if dto.SourceAsset != destAssetCode {
 		if _, uerr := ws.postgres.Exec(ctx, `
-			UPDATE transactions SET transaction_type = 'path_payment', source_asset = $2, source_amount = $3::text::numeric
+			UPDATE transactions SET source_asset = $2, source_amount = $3::text::numeric
 			WHERE transaction_hash = $1`, txHash, dto.SourceAsset, sourceAmount); uerr != nil {
 			ws.log.Warn("failed to record path payment source", "error", uerr, "transaction_hash", txHash)
 		}

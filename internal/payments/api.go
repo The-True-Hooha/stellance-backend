@@ -88,10 +88,50 @@ func (s *PaymentService) ListPayments(ctx context.Context, userID, status string
 	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: records}
 }
 
+// AdminListPayments lists every payment on the platform, newest first.
+func (s *PaymentService) AdminListPayments(ctx context.Context, status, search string, page, limit int) *utils.ApiResponse {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	_, stage, err := s.chain(ctx)
+	if err != nil {
+		return s.internalError("resolve network", err)
+	}
+
+	const filter = `
+		LEFT JOIN invoice i ON i.id = p.invoice_id
+		WHERE ($1 = '' OR p.verification_status::text = $1)
+		  AND ($2 = '' OR p.transaction_hash = $2 OR p.payment_reference ILIKE '%' || $2 || '%'
+		       OR p.sender = $2 OR p.recipient = $2 OR i.invoice_number ILIKE '%' || $2 || '%')`
+
+	var total int
+	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) FROM payments p `+filter, status, search).Scan(&total); err != nil {
+		return s.internalError("count payments", err)
+	}
+	records, err := s.queryPayments(ctx, stage, filter+`
+		ORDER BY p.detected_at DESC LIMIT $3 OFFSET $4`, status, search, limit, (page-1)*limit)
+	if err != nil {
+		return s.internalError("list all payments", err)
+	}
+	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: map[string]any{
+		"payments": records,
+		"meta": map[string]int{
+			"page": page, "limit": limit, "total": total,
+			"total_pages": (total + limit - 1) / limit,
+		},
+	}}
+}
+
 // VerifyTransactionForUser re-checks a transaction on chain. It reports the payments found and never
 // trusts the caller about their outcome.
 func (s *PaymentService) VerifyTransactionForUser(ctx context.Context, userID, hash string) *utils.ApiResponse {
 	records, err := s.VerifyTransaction(ctx, hash)
+	if errors.Is(err, ErrTransactionNotFound) {
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "transaction not found on Stellar"}
+	}
 	if err != nil {
 		s.log.Error("verify transaction", "transaction_hash", hash, "error", err)
 		return &utils.ApiResponse{StatusCode: http.StatusBadGateway, Message: "could not verify the transaction on Stellar, try again shortly"}

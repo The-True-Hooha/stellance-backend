@@ -183,6 +183,11 @@ definitions:
     required:
     - transaction_hash
     type: object
+  invoice.ReviewInvoiceDTO:
+    properties:
+      approve:
+        type: boolean
+    type: object
   invoice.SendInvoiceDto:
     properties:
       emails:
@@ -573,6 +578,43 @@ paths:
       summary: Get invoice by ID (admin)
       tags:
       - admin
+  /admin/payments:
+    get:
+      description: Paginated list of every detected payment, including unmatched,
+        invalid and failed ones
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page, max 100
+        in: query
+        name: limit
+        type: integer
+      - description: verification status
+        in: query
+        name: status
+        type: string
+      - description: transaction hash, payment reference, address or invoice number
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: All platform payments (v2)
+      tags:
+      - admin
   /admin/stats:
     get:
       description: Returns total users, invoices, revenue, and overdue counts
@@ -874,31 +916,6 @@ paths:
       summary: Get transactions for a user
       tags:
       - admin
-  /auth/admin/signup:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Admin credentials
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/auth.AuthRequestDto'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      summary: Register a new admin user
-      tags:
-      - auth
   /auth/change-password:
     post:
       consumes:
@@ -1293,7 +1310,7 @@ paths:
       summary: Add emoji reaction to a comment
       tags:
       - comments
-  /invoices:
+  /invoice:
     get:
       parameters:
       - description: Filter by status
@@ -1381,7 +1398,7 @@ paths:
       summary: Create a new invoice
       tags:
       - invoices
-  /invoices/{id}:
+  /invoice/{id}:
     delete:
       parameters:
       - description: Invoice ID
@@ -1492,7 +1509,7 @@ paths:
       summary: Update invoice (multipart form)
       tags:
       - invoices
-  /invoices/{id}/mark-paid:
+  /invoice/{id}/mark-paid:
     patch:
       consumes:
       - application/json
@@ -1524,7 +1541,7 @@ paths:
       summary: Mark invoice as paid
       tags:
       - invoices
-  /invoices/download/{id}/pdf:
+  /invoice/download/{id}/pdf:
     get:
       parameters:
       - description: Invoice ID
@@ -1548,7 +1565,7 @@ paths:
       summary: Download invoice as PDF
       tags:
       - invoices
-  /invoices/overview:
+  /invoice/overview:
     get:
       parameters:
       - description: Month filter (YYYY-MM)
@@ -1567,7 +1584,7 @@ paths:
       summary: Get invoice breakdown by status (pie chart data)
       tags:
       - invoices
-  /invoices/query:
+  /invoice/query:
     get:
       parameters:
       - description: Search term
@@ -1587,19 +1604,22 @@ paths:
       summary: Full-text search invoices for current user
       tags:
       - invoices
-  /invoices/review/{id}:
-    get:
+  /invoice/review/{id}:
+    post:
+      consumes:
+      - application/json
       parameters:
       - description: Invoice ID
         in: path
         name: id
         required: true
         type: string
-      - description: true to approve, false to reject
-        in: query
-        name: approve
+      - description: Decision
+        in: body
+        name: body
         required: true
-        type: boolean
+        schema:
+          $ref: '#/definitions/invoice.ReviewInvoiceDTO'
       produces:
       - application/json
       responses:
@@ -1614,7 +1634,7 @@ paths:
       summary: Approve or reject invoice (payer action)
       tags:
       - invoices
-  /invoices/search:
+  /invoice/search:
     get:
       parameters:
       - description: Invoice ID
@@ -1639,7 +1659,7 @@ paths:
       summary: Search invoice by ID or URL (public)
       tags:
       - invoices
-  /invoices/send/{id}:
+  /invoice/send/{id}:
     post:
       consumes:
       - application/json
@@ -1671,7 +1691,7 @@ paths:
       summary: Send invoice via email
       tags:
       - invoices
-  /invoices/stats:
+  /invoice/stats:
     get:
       produces:
       - application/json
@@ -1685,7 +1705,7 @@ paths:
       summary: Get invoice statistics for current user
       tags:
       - invoices
-  /notifications:
+  /notification:
     get:
       parameters:
       - description: Page number
@@ -1720,7 +1740,7 @@ paths:
       summary: Get user notifications
       tags:
       - notifications
-  /notifications/{id}:
+  /notification/{id}:
     delete:
       parameters:
       - description: Notification ID
@@ -1884,6 +1904,105 @@ paths:
       summary: Re-check a Stellar transaction against invoices (v2)
       tags:
       - payments-v2
+  /profile:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Profile data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.CompleteProfileRequestDto'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: Complete user profile
+      tags:
+      - user
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateProfileDto'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: Update user profile
+      tags:
+      - user
+  /profile/{id}:
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: Get user profile by ID
+      tags:
+      - user
+  /profile/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: Get current authenticated user
+      tags:
+      - user
   /recurring:
     get:
       produces:
@@ -2006,33 +2125,7 @@ paths:
       summary: Update recurring schedule
       tags:
       - recurring
-  /transaction/status/{id}:
-    get:
-      description: Returns the current status of a transaction and a Stellar explorer
-        link for the on-chain record
-      parameters:
-      - description: Transaction ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      security:
-      - BearerAuth: []
-      summary: Check payment status
-      tags:
-      - transactions
-  /transactions:
+  /transaction:
     get:
       parameters:
       - description: Filter by user ID (admin only)
@@ -2063,7 +2156,7 @@ paths:
       summary: List transactions
       tags:
       - transactions
-  /transactions/{id}:
+  /transaction/{id}:
     delete:
       parameters:
       - description: Transaction ID
@@ -2087,7 +2180,7 @@ paths:
       summary: Delete a transaction
       tags:
       - transactions
-  /transactions/id/{id}:
+  /transaction/id/{id}:
     get:
       parameters:
       - description: Transaction ID
@@ -2111,7 +2204,7 @@ paths:
       summary: Get transaction by ID
       tags:
       - transactions
-  /transactions/inflow:
+  /transaction/inflow:
     get:
       parameters:
       - description: Start date (YYYY-MM-DD)
@@ -2138,7 +2231,7 @@ paths:
       summary: Get cash flow over a date range
       tags:
       - transactions
-  /transactions/stats:
+  /transaction/stats:
     get:
       produces:
       - application/json
@@ -2156,63 +2249,12 @@ paths:
       summary: Get transaction overview stats
       tags:
       - transactions
-  /users:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Profile data
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/user.CompleteProfileRequestDto'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      security:
-      - BearerAuth: []
-      summary: Complete user profile
-      tags:
-      - user
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: Fields to update
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/user.UpdateProfileDto'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      security:
-      - BearerAuth: []
-      summary: Update user profile
-      tags:
-      - user
-  /users/{id}:
+  /transaction/status/{id}:
     get:
+      description: Returns the current status of a transaction and a Stellar explorer
+        link for the on-chain record
       parameters:
-      - description: User ID
+      - description: Transaction ID
         in: path
         name: id
         required: true
@@ -2224,37 +2266,15 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/utils.ApiResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "403":
-          description: Forbidden
+        "404":
+          description: Not Found
           schema:
             $ref: '#/definitions/utils.ApiResponse'
       security:
       - BearerAuth: []
-      summary: Get user profile by ID
+      summary: Check payment status
       tags:
-      - user
-  /users/me:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      security:
-      - BearerAuth: []
-      summary: Get current authenticated user
-      tags:
-      - user
+      - transactions
   /wallet:
     post:
       produces:
@@ -2295,30 +2315,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get wallet by ID
-      tags:
-      - wallet
-  /wallet/{id}/export:
-    get:
-      parameters:
-      - description: Wallet ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.ApiResponse'
-      security:
-      - BearerAuth: []
-      summary: Export wallet keys
       tags:
       - wallet
   /wallet/{id}/pay/invoice:
@@ -2438,6 +2434,30 @@ paths:
       security:
       - BearerAuth: []
       summary: Set or update transaction PIN
+      tags:
+      - wallet
+  /wallet/export/{id}:
+    get:
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: Export wallet keys
       tags:
       - wallet
   /wallet/lookup:

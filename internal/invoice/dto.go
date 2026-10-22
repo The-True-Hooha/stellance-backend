@@ -114,7 +114,7 @@ type InvoiceFiltersDto struct {
 type InvoiceSenderDetails struct {
 	UserId         string  `json:"user_id"`
 	Name           string  `json:"name"`
-	Email          string  `json:"email"`
+	Email          string  `json:"email,omitempty"`
 	Location       string  `json:"location"`
 	BusinessName   *string `json:"business_name,omitempty"`
 	PhoneNumber    *string `json:"phone_number,omitempty"`
@@ -187,4 +187,8 @@ type UpdateInvoiceDTO struct {
 	ServiceFee    *float64       `json:"service_fee" validate:"omitempty,gte=0"`
 	DueDate       string         `json:"due_date" validate:"omitempty,datetime=2006-01-02"`
 	TemplateID    TemplateIDType `json:"template_id" validate:"omitempty"`
+}
+
+type ReviewInvoiceDTO struct {
+	Approve *bool `json:"approve"`
 }

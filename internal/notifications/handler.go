@@ -32,7 +32,7 @@ func NewNotificationHandler(ns *NotificationService) *NotificationHandler {
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /notifications [get]
+// @Router       /notification [get]
 func (h *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.Request) {
 	log := h.service.log
 	ctx := r.Context()
@@ -96,7 +96,7 @@ func (h *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.Re
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /notifications/{id} [patch]
+// @Router       /notification/{id} [patch]
 func (h *NotificationHandler) EditNotificationViewStatus(w http.ResponseWriter, r *http.Request) {
 	log := h.service.log
 	ctx := r.Context()
@@ -129,7 +129,7 @@ func (h *NotificationHandler) EditNotificationViewStatus(w http.ResponseWriter, 
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /notifications/{id} [delete]
+// @Router       /notification/{id} [delete]
 func (h *NotificationHandler) DeleteNotificationById(w http.ResponseWriter, r *http.Request) {
 	log := h.service.log
 	ctx := r.Context()
@@ -153,7 +153,7 @@ func (h *NotificationHandler) DeleteNotificationById(w http.ResponseWriter, r *h
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /notifications/{id} [get]
+// @Router       /notification/{id} [get]
 func (h *NotificationHandler) GetNotificationById(w http.ResponseWriter, r *http.Request) {
 	log := h.service.log
 	ctx := r.Context()

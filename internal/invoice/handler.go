@@ -59,7 +59,7 @@ func RegisterInvoiceFiltersValidation(v *validator.Validate) {
 // @Success      201  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices [post]
+// @Router       /invoice [post]
 func (handler *InvoiceHandler) CreateNewInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 	log := handler.service.log
 	ctx := r.Context()
@@ -200,7 +200,7 @@ func (handler *InvoiceHandler) CreateNewInvoiceHandler(w http.ResponseWriter, r 
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices [get]
+// @Router       /invoice [get]
 func (handler *InvoiceHandler) GetManyInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 
 	log := handler.service.log
@@ -289,7 +289,7 @@ func (handler *InvoiceHandler) GetManyInvoiceHandler(w http.ResponseWriter, r *h
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/{id} [get]
+// @Router       /invoice/{id} [get]
 func (h *InvoiceHandler) GetInvoiceByIDHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -316,7 +316,7 @@ func (h *InvoiceHandler) GetInvoiceByIDHandler(w http.ResponseWriter, r *http.Re
 // @Param        url  query  string  false  "Invoice URL"
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
-// @Router       /invoices/search [get]
+// @Router       /invoice/search [get]
 func (h *InvoiceHandler) GetInvoiceSearchHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -348,7 +348,7 @@ func (h *InvoiceHandler) GetInvoiceSearchHandler(w http.ResponseWriter, r *http.
 // @Param        search  query  string  true  "Search term"
 // @Success      200  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/query [get]
+// @Router       /invoice/query [get]
 func (h *InvoiceHandler) QueryInvoiceBySearch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID, ok := utils.GetUserIDFromContext(ctx)
@@ -376,7 +376,7 @@ func (h *InvoiceHandler) QueryInvoiceBySearch(w http.ResponseWriter, r *http.Req
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/{id} [delete]
+// @Router       /invoice/{id} [delete]
 func (h *InvoiceHandler) DeleteInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -401,7 +401,7 @@ func (h *InvoiceHandler) DeleteInvoiceHandler(w http.ResponseWriter, r *http.Req
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/{id} [post]
+// @Router       /invoice/{id} [post]
 func (h *InvoiceHandler) EditInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -452,7 +452,7 @@ func (h *InvoiceHandler) EditInvoiceHandler(w http.ResponseWriter, r *http.Reque
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/send/{id} [post]
+// @Router       /invoice/send/{id} [post]
 func (h *InvoiceHandler) SendInvoice(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -490,13 +490,13 @@ func (h *InvoiceHandler) SendInvoice(w http.ResponseWriter, r *http.Request) {
 // @Tags         invoices
 // @Produce      json
 // @Param        id       path   string  true  "Invoice ID"
-// @Param        approve  query  bool    true  "true to approve, false to reject"
+// @Accept       json
+// @Param        body     body   ReviewInvoiceDTO  true  "Decision"
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
-// @Router       /invoices/review/{id} [get]
+// @Router       /invoice/review/{id} [post]
 func (h *InvoiceHandler) ReviewInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	approveStr := r.URL.Query().Get("approve")
 	invoiceID := r.PathValue("id")
 
 	reqUserId, ok := utils.GetUserIDFromContext(ctx)
@@ -509,11 +509,12 @@ func (h *InvoiceHandler) ReviewInvoiceHandler(w http.ResponseWriter, r *http.Req
 		h.service.log.Warn("public access to invoice")
 	}
 
-	approve, err := strconv.ParseBool(approveStr)
-	if err != nil {
+	var dto ReviewInvoiceDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil || dto.Approve == nil {
 		http.Error(w, "Invalid approve value", http.StatusBadRequest)
 		return
 	}
+	approve := *dto.Approve
 
 	response := h.service.ReviewInvoice(ctx, invoiceID, approve, role, reqUserId)
 	utils.WriteToJson(w, response.StatusCode, response)
@@ -525,7 +526,7 @@ func (h *InvoiceHandler) ReviewInvoiceHandler(w http.ResponseWriter, r *http.Req
 // @Produce      json
 // @Success      200  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/stats [get]
+// @Router       /invoice/stats [get]
 func (h *InvoiceHandler) GetInvoiceStatsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -544,7 +545,7 @@ func (h *InvoiceHandler) GetInvoiceStatsHandler(w http.ResponseWriter, r *http.R
 // @Param        month  query  string  false  "Month filter (YYYY-MM)"
 // @Success      200  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/overview [get]
+// @Router       /invoice/overview [get]
 func (ih *InvoiceHandler) GetInvoicesByStatus(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := utils.GetUserIDFromContext(r.Context())
@@ -575,7 +576,7 @@ func (ih *InvoiceHandler) GetInvoicesByStatus(w http.ResponseWriter, r *http.Req
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/{id} [put]
+// @Router       /invoice/{id} [put]
 func (handler *InvoiceHandler) UpdateInvoiceHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	invoiceID := r.PathValue("id")
@@ -697,7 +698,7 @@ func (handler *InvoiceHandler) UpdateInvoiceHandler(w http.ResponseWriter, r *ht
 // @Success      200  {file}    binary
 // @Failure      404  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/download/{id}/pdf [get]
+// @Router       /invoice/download/{id}/pdf [get]
 func (h *InvoiceHandler) GetInvoicePDFHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	invoiceID := r.PathValue("id")
@@ -736,7 +737,7 @@ func (h *InvoiceHandler) GetInvoicePDFHandler(w http.ResponseWriter, r *http.Req
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      400  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /invoices/{id}/mark-paid [patch]
+// @Router       /invoice/{id}/mark-paid [patch]
 func (h *InvoiceHandler) MarkInvoicePaidHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	invoiceID := r.PathValue("id")

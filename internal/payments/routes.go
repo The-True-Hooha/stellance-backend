@@ -15,5 +15,7 @@ func RegisterPaymentRoutes(apiV1 *httpx.RouteGroup, router *http.ServeMux, s *Pa
 	g.HandleFunc("GET /", auth.Authenticate(http.HandlerFunc(h.ListPaymentsHandler)).ServeHTTP)
 	g.HandleFunc("GET /invoice/{id}", auth.Authenticate(http.HandlerFunc(h.GetInvoicePaymentsHandler)).ServeHTTP)
 	g.HandleFunc("GET /request/{invoice_url}", auth.IsPublicAccess(http.HandlerFunc(h.GetPublicRequestHandler)).ServeHTTP)
+	apiV1.AddGroup("/admin").HandleFunc("GET /payments",
+		auth.Authenticate(auth.RequireAdmin(http.HandlerFunc(h.AdminListPaymentsHandler))).ServeHTTP)
 	g.HandleFunc("POST /verify", auth.Authenticate(http.HandlerFunc(h.VerifyTransactionHandler)).ServeHTTP)
 }

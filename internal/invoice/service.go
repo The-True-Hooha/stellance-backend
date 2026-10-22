@@ -333,17 +333,17 @@ func (is *InvoiceService) validateAndCalculateInvoice(dto CreateInvoiceDTO) (sub
 func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFiltersDto, user_id string) *utils.ApiResponse {
 	if dto.Status != "" {
 		validStatuses := map[InvoiceStatus]bool{
-			InvoiceStatusDraft:            true,
-			InvoiceStatusSent:             true,
-			InvoiceStatusViewed:           true,
-			InvoiceStatusPaid:             true,
-			InvoiceStatusOverdue:          true,
-			InvoiceStatusCancelled:        true,
-			InvoiceStatusRefunded:         true,
-			InvoiceStatusPending:          true,
-			InvoiceStatusPaymentDetected:  true,
-			InvoiceStatusInvalidPayment:   true,
-			InvoiceStatusExpired:          true,
+			InvoiceStatusDraft:           true,
+			InvoiceStatusSent:            true,
+			InvoiceStatusViewed:          true,
+			InvoiceStatusPaid:            true,
+			InvoiceStatusOverdue:         true,
+			InvoiceStatusCancelled:       true,
+			InvoiceStatusRefunded:        true,
+			InvoiceStatusPending:         true,
+			InvoiceStatusPaymentDetected: true,
+			InvoiceStatusInvalidPayment:  true,
+			InvoiceStatusExpired:         true,
 		}
 		if !validStatuses[dto.Status] {
 			return &utils.ApiResponse{
@@ -1087,7 +1087,27 @@ func (is *InvoiceService) GetInvoiceById(ctx context.Context, invoiceId, userId,
 	}
 }
 
+// GetInvoiceSearch is the public invoice view: the creator's email and phone number stay hidden
+// from everyone except the creator and admins.
 func (is *InvoiceService) GetInvoiceSearch(ctx context.Context, invoiceUrl, invoiceId, userId, role string) *utils.ApiResponse {
+	resp := is.getInvoiceSearch(ctx, invoiceUrl, invoiceId, userId, role)
+	var inv InvoiceResponse
+	switch d := resp.Data.(type) {
+	case InvoiceResponse:
+		inv = d
+	case *InvoiceResponse:
+		inv = *d
+	default:
+		return resp
+	}
+	if role != "admin" && inv.CreatedBy.UserId != userId {
+		inv.CreatedBy.Email = ""
+		inv.CreatedBy.PhoneNumber = nil
+	}
+	return &utils.ApiResponse{StatusCode: resp.StatusCode, Message: resp.Message, Data: inv}
+}
+
+func (is *InvoiceService) getInvoiceSearch(ctx context.Context, invoiceUrl, invoiceId, userId, role string) *utils.ApiResponse {
 	log := is.log
 	if invoiceId == "" && invoiceUrl == "" {
 		return &utils.ApiResponse{
@@ -2282,19 +2302,23 @@ func (is *InvoiceService) GetStats(ctx context.Context, userId string) *utils.Ap
 			COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
 			COUNT(*) FILTER (WHERE status = 'paid') AS paid_count,
 			COUNT(*) FILTER (WHERE status = 'overdue') AS overdue_count,
+			COUNT(*) FILTER (WHERE status = 'expired') AS expired_count,
+			COUNT(*) FILTER (WHERE status = 'invalid_payment') AS invalid_payment_count,
 			COUNT(*) AS total_count
 		FROM invoice
 		WHERE created_by_id = $1;
 	`
 
 	var stats struct {
-		PendingCount int `db:"pending_count" json:"pending_count"`
-		PaidCount    int `db:"paid_count" json:"paid_count"`
-		OverdueCount int `db:"overdue_count" json:"overdue_count"`
-		TotalCount   int `db:"total_count" json:"total_count"`
+		PendingCount        int `db:"pending_count" json:"pending_count"`
+		PaidCount           int `db:"paid_count" json:"paid_count"`
+		OverdueCount        int `db:"overdue_count" json:"overdue_count"`
+		ExpiredCount        int `db:"expired_count" json:"expired_count"`
+		InvalidPaymentCount int `db:"invalid_payment_count" json:"invalid_payment_count"`
+		TotalCount          int `db:"total_count" json:"total_count"`
 	}
 
-	err := is.postgres.QueryRow(ctx, query, userId).Scan(&stats.PendingCount, &stats.PaidCount, &stats.OverdueCount, &stats.TotalCount)
+	err := is.postgres.QueryRow(ctx, query, userId).Scan(&stats.PendingCount, &stats.PaidCount, &stats.OverdueCount, &stats.ExpiredCount, &stats.InvalidPaymentCount, &stats.TotalCount)
 	if err != nil {
 		return &utils.ApiResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -2829,6 +2853,9 @@ func (is *InvoiceService) MarkInvoicePaid(ctx context.Context, invoiceID, userID
 	}
 
 	records, err := payments.NewPaymentService().VerifyTransaction(ctx, dto.TransactionHash)
+	if errors.Is(err, payments.ErrTransactionNotFound) {
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "transaction not found on Stellar"}
+	}
 	if err != nil {
 		is.log.Error("failed to verify transaction", "error", err, "invoice_id", invoiceID, "transaction_hash", dto.TransactionHash)
 		return &utils.ApiResponse{StatusCode: http.StatusBadGateway, Message: "could not verify the transaction on Stellar, try again shortly"}

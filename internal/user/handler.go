@@ -29,7 +29,7 @@ func NewUserHandler(h *UserService) *UserHandler {
 // @Success      200   {object}  utils.ApiResponse
 // @Failure      400   {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /users [post]
+// @Router       /profile [post]
 func (h *UserHandler) CompleteProfileHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	email, ok := utils.GetUserEmailFromContext(ctx)
@@ -60,7 +60,7 @@ func (h *UserHandler) CompleteProfileHandler(w http.ResponseWriter, r *http.Requ
 // @Failure      401  {object}  utils.ApiResponse
 // @Failure      403  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /users/{id} [get]
+// @Router       /profile/{id} [get]
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := r.PathValue("id")
@@ -91,7 +91,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 // @Success      200   {object}  utils.ApiResponse
 // @Failure      400   {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /users [put]
+// @Router       /profile [put]
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := h.service.log
@@ -126,7 +126,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /users/me [get]
+// @Router       /profile/me [get]
 func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	requestingUserID, ok := utils.GetUserIDFromContext(ctx)

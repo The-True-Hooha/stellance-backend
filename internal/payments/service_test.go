@@ -252,8 +252,12 @@ func TestRejectedPaymentsNeverPayInvoice(t *testing.T) {
 			if (inv != nil) != tc.wantLinked {
 				t.Fatalf("payment linked to invoice = %v, want %v", inv != nil, tc.wantLinked)
 			}
-			if n := f.count(`SELECT COUNT(*) FROM transactions`); n != 0 {
-				t.Fatalf("transactions rows = %d, want 0", n)
+			if n := f.count(`SELECT COUNT(*) FROM transactions WHERE status = 'confirmed' AND transaction_type = 'payment'`); n != 0 {
+				t.Fatalf("settled payment rows = %d, want 0", n)
+			}
+			wantHistory := 1
+			if n := f.count(`SELECT COUNT(*) FROM transactions`); n != wantHistory {
+				t.Fatalf("wallet history rows = %d, want %d", n, wantHistory)
 			}
 		})
 	}
@@ -465,5 +469,37 @@ func TestEnsurePaymentRequest(t *testing.T) {
 	draft, _ := f.invoice("draft", "1", nil)
 	if _, err := f.svc.EnsurePaymentRequest(context.Background(), draft); !errors.Is(err, ErrInvoiceNotPayable) {
 		t.Fatalf("draft err = %v, want ErrInvoiceNotPayable", err)
+	}
+}
+
+func TestPaymentToClosedInvoiceWithoutRecipientIsInvalidNotUnmatched(t *testing.T) {
+	for status, wantReason := range map[string]string{
+		"paid":      "invoice is already paid",
+		"cancelled": "invoice is cancelled and cannot accept payment",
+	} {
+		t.Run(status, func(t *testing.T) {
+			f := newFixture(t)
+			id, ref := f.invoice("sent", "100", nil)
+			if _, err := f.db.Exec(context.Background(),
+				`UPDATE invoice SET status = $2::invoice_status, paid_at = CASE WHEN $2 = 'paid' THEN NOW() END WHERE id = $1`,
+				id, status); err != nil {
+				t.Fatal(err)
+			}
+			p := f.send(vendorAddr, chainPayment{Stroops: 100_0000000, Memo: ref, Successful: true})
+			f.poll()
+
+			st, _ := f.paymentStatus(p.OperationID)
+			if st != "invalid" {
+				t.Fatalf("payment status = %s, want invalid", st)
+			}
+			var reason string
+			if err := f.db.QueryRow(context.Background(),
+				`SELECT failure_reason FROM payments WHERE operation_id = $1`, p.OperationID).Scan(&reason); err != nil {
+				t.Fatal(err)
+			}
+			if reason != wantReason {
+				t.Fatalf("failure_reason = %q, want %q", reason, wantReason)
+			}
+		})
 	}
 }

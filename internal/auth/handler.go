@@ -67,15 +67,7 @@ func (handler *AuthHandler) SignUpHandler(w http.ResponseWriter, r *http.Request
 	utils.WriteToJson(w, data.StatusCode, data)
 }
 
-// AdminRegister godoc
-// @Summary      Register a new admin user
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Param        body  body      AuthRequestDto  true  "Admin credentials"
-// @Success      201   {object}  utils.ApiResponse
-// @Failure      400   {object}  utils.ApiResponse
-// @Router       /auth/admin/signup [post]
+// AdminRegister is not routed; admins are created out of band.
 func (handler *AuthHandler) AdminRegister(w http.ResponseWriter, r *http.Request) {
 	var dto AuthRequestDto
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {

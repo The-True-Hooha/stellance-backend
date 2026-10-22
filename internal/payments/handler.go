@@ -115,3 +115,29 @@ func (h *PaymentHandler) VerifyTransactionHandler(w http.ResponseWriter, r *http
 	}
 	write(w, h.service.VerifyTransactionForUser(r.Context(), uid, dto.TransactionHash))
 }
+
+// AdminListPaymentsHandler godoc
+// @Summary      All platform payments (v2)
+// @Description  Paginated list of every detected payment, including unmatched, invalid and failed ones
+// @Tags         admin
+// @Produce      json
+// @Param        page    query  int     false  "Page number"
+// @Param        limit   query  int     false  "Items per page, max 100"
+// @Param        status  query  string  false  "verification status"
+// @Param        search  query  string  false  "transaction hash, payment reference, address or invoice number"
+// @Success      200  {object}  utils.ApiResponse
+// @Failure      403  {object}  utils.ApiResponse
+// @Security     BearerAuth
+// @Router       /admin/payments [get]
+func (h *PaymentHandler) AdminListPaymentsHandler(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	switch VerificationStatus(status) {
+	case "", StatusPending, StatusDetected, StatusVerified, StatusInvalid, StatusUnmatched, StatusFailed:
+	default:
+		write(w, &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invalid status filter"})
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	write(w, h.service.AdminListPayments(r.Context(), status, r.URL.Query().Get("search"), page, limit))
+}

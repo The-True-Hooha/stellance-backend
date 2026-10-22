@@ -29,7 +29,7 @@ func NewTransactionHandler(ts *TransactionService) *TransactionHandler {
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /transactions/stats [get]
+// @Router       /transaction/stats [get]
 func (h *TransactionHandler) GetTransactionOverviewCard(w http.ResponseWriter, r *http.Request) {
 	userId, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -48,7 +48,7 @@ func (h *TransactionHandler) GetTransactionOverviewCard(w http.ResponseWriter, r
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /transactions/id/{id} [get]
+// @Router       /transaction/id/{id} [get]
 func (h *TransactionHandler) GetTransactionByIdHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -69,7 +69,7 @@ func (h *TransactionHandler) GetTransactionByIdHandler(w http.ResponseWriter, r 
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /transactions/{id} [delete]
+// @Router       /transaction/{id} [delete]
 func (h *TransactionHandler) DeleteTransactionByIdHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -92,7 +92,7 @@ func (h *TransactionHandler) DeleteTransactionByIdHandler(w http.ResponseWriter,
 // @Success      200  {object}  utils.ApiResponse
 // @Failure      401  {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /transactions [get]
+// @Router       /transaction [get]
 func (handler *TransactionHandler) GetManyTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	log := handler.service.log
 	ctx := r.Context()
@@ -191,7 +191,7 @@ func (h *TransactionHandler) CheckPaymentStatus(w http.ResponseWriter, r *http.R
 // @Success      200   {object}  utils.ApiResponse
 // @Failure      401   {object}  utils.ApiResponse
 // @Security     BearerAuth
-// @Router       /transactions/inflow [get]
+// @Router       /transaction/inflow [get]
 func (th *TransactionHandler) GetTransactionCashFlow(w http.ResponseWriter, r *http.Request) {
 	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {

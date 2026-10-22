@@ -256,6 +256,7 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 	log := s.log
 
 	var (
+		walletID     sql.NullString
 		address      sql.NullString
 		usdcBalance  sql.NullFloat64
 		xlmBalance   sql.NullFloat64
@@ -271,7 +272,7 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 		u.id, u.email, u.first_name, u.last_name, u.business_name,
 		u.phone_number, u.country, u.email_verified, u.is_active,
 		u.created_at, u.updated_at,
-		w.address, w.usdc_balance, w.xlm_balance
+		w.id, w.address, w.usdc_balance, w.xlm_balance
 		FROM users u
 		LEFT JOIN wallets w ON w.user_id = u.id AND w.is_primary = true AND w.is_active = true
 		WHERE u.id = $1 AND u.is_active = true
@@ -290,6 +291,7 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 		&profile.IsActive,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
+		&walletID,
 		&address,
 		&usdcBalance,
 		&xlmBalance,
@@ -334,8 +336,9 @@ func (s *UserService) GetProfileByID(ctx context.Context, userID string) *utils.
 		Balance: &WalletBalance{},
 	}
 
-	if address.Valid || usdcBalance.Valid || xlmBalance.Valid {
+	if walletID.Valid || address.Valid || usdcBalance.Valid || xlmBalance.Valid {
 		wallet = &UserWallet{
+			Id:      utils.NullStringPtr(walletID),
 			Address: utils.NullStringPtr(address),
 			Balance: &WalletBalance{
 				USDC: utils.NullFloatPtr(usdcBalance),

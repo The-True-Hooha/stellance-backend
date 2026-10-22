@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/The-True-Hooha/stellance-backend/internal/notifications"
@@ -14,6 +15,7 @@ import (
 	"github.com/The-True-Hooha/stellance-backend/pkg/config"
 	jwt_ "github.com/The-True-Hooha/stellance-backend/pkg/jwt"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/stellar/go/amount"
@@ -27,8 +29,9 @@ const (
 )
 
 var (
-	ErrNoRecipientWallet = errors.New("invoice creator has no active stellar wallet")
-	ErrInvoiceNotPayable = errors.New("invoice is not payable")
+	ErrNoRecipientWallet   = errors.New("invoice creator has no active stellar wallet")
+	ErrInvoiceNotPayable   = errors.New("invoice is not payable")
+	ErrTransactionNotFound = errors.New("transaction not found on Stellar")
 )
 
 type PaymentService struct {
@@ -66,7 +69,11 @@ type querier interface {
 }
 
 const invoiceViewSelect = `
-	SELECT id, status::text, COALESCE(recipient_address, ''), payment_reference, currency::text,
+	SELECT id, status::text,
+	       COALESCE(recipient_address, (SELECT w.address FROM wallets w
+	           WHERE w.user_id = invoice.created_by_id AND w.chain = 'stellar' AND w.is_primary AND w.is_active
+	           LIMIT 1), ''),
+	       payment_reference, currency::text,
 	       total::text, ((due_date + $2::int + 1)::timestamp AT TIME ZONE 'UTC')
 	FROM invoice `
 
@@ -149,8 +156,43 @@ func insertArgs(p chainPayment, invoiceID *string) []any {
 const insertPaymentCols = `invoice_id, operation_id, transaction_hash, sender, recipient, asset_code, asset_issuer,
 	amount, payment_reference, ledger_closed_at`
 
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// recordRejectedTransaction puts an incoming payment that did not settle an invoice into the wallet
+// owner's transaction history. Unmatched deposits are funding; everything else is a failed payment.
+func recordRejectedTransaction(ctx context.Context, e execer, p chainPayment, invoiceID *string, status VerificationStatus) error {
+	txType, txStatus := "payment", "failed"
+	if status == StatusUnmatched {
+		txType, txStatus = "funding", "confirmed"
+	}
+	cur := strings.ToLower(p.Asset.Code)
+	if cur != "usdc" && cur != "xlm" {
+		return nil
+	}
+	_, err := e.Exec(ctx, `
+		INSERT INTO transactions (invoice_id, wallet_id, transaction_hash, user_id, amount, currency, status,
+		                          token_type, transaction_type, confirmed_at)
+		SELECT $1, w.id, $2, w.user_id, $3::text::numeric, $4::currency_type, $5::transaction_status,
+		       $4::currency_type, $6::transaction_type, $7
+		FROM wallets w WHERE w.address = $8 AND w.chain = 'stellar'
+		LIMIT 1
+		ON CONFLICT (transaction_hash) DO NOTHING`,
+		invoiceID, p.TxHash, amount.StringFromInt64(p.Stroops), cur, txStatus, txType, p.ClosedAt, p.To)
+	if err != nil {
+		return fmt.Errorf("record %s transaction for payment %s: %w", status, p.OperationID, err)
+	}
+	return nil
+}
+
 func (s *PaymentService) insertSettled(ctx context.Context, p chainPayment, invoiceID *string, v verdict) error {
-	_, err := s.postgres.Exec(ctx, `
+	tx, err := s.postgres.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO payments (`+insertPaymentCols+`, verification_status, failure_reason)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9, $10, $11::payment_verification_status, $12)
 		ON CONFLICT (operation_id) DO NOTHING`,
@@ -158,7 +200,12 @@ func (s *PaymentService) insertSettled(ctx context.Context, p chainPayment, invo
 	if err != nil {
 		return fmt.Errorf("insert %s payment %s: %w", v.Status, p.OperationID, err)
 	}
-	return nil
+	if tag.RowsAffected() == 1 {
+		if err = recordRejectedTransaction(ctx, tx, p, invoiceID, v.Status); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // insertDetected stores the payment as 'detected' and flags the invoice. It returns the payment id when
@@ -277,6 +324,9 @@ func (s *PaymentService) finalize(ctx context.Context, paymentID, stage string) 
 			WHERE id = $1`, paymentID, string(v.Status), v.Reason); err != nil {
 			return fmt.Errorf("reject payment %s: %w", paymentID, err)
 		}
+		if err = recordRejectedTransaction(ctx, tx, p, &invoiceID, v.Status); err != nil {
+			return err
+		}
 		if v.Status == StatusInvalid {
 			if _, err = tx.Exec(ctx, `
 				UPDATE invoice SET status = 'invalid_payment', updated_at = NOW()
@@ -363,10 +413,12 @@ func (s *PaymentService) Poll(ctx context.Context) error {
 	}
 
 	rows, err := conn.Query(ctx, `
-		SELECT DISTINCT recipient_address FROM invoice
-		WHERE recipient_address IS NOT NULL
-		  AND (status IN ('sent', 'viewed', 'overdue', 'pending', 'payment_detected', 'invalid_payment')
-		       OR updated_at > NOW() - INTERVAL '7 days')`)
+		SELECT DISTINCT COALESCE(i.recipient_address, w.address)
+		FROM invoice i
+		LEFT JOIN wallets w ON w.user_id = i.created_by_id AND w.chain = 'stellar' AND w.is_primary AND w.is_active
+		WHERE COALESCE(i.recipient_address, w.address) IS NOT NULL
+		  AND (i.status IN ('sent', 'viewed', 'overdue', 'pending', 'payment_detected', 'invalid_payment')
+		       OR i.updated_at > NOW() - INTERVAL '7 days')`)
 	if err != nil {
 		return err
 	}

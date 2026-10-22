@@ -62,6 +62,9 @@ func (h horizonChain) TransactionPayments(ctx context.Context, hash string) ([]c
 		Join:           "transactions",
 	})
 	if err != nil {
+		if horizonclient.IsNotFoundError(err) {
+			return nil, ErrTransactionNotFound
+		}
 		return nil, fmt.Errorf("horizon operations for transaction %s: %w", hash, err)
 	}
 
