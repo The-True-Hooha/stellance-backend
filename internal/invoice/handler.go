@@ -516,7 +516,7 @@ func (h *InvoiceHandler) ReviewInvoiceHandler(w http.ResponseWriter, r *http.Req
 	}
 	approve := *dto.Approve
 
-	response := h.service.ReviewInvoice(ctx, invoiceID, approve, role, reqUserId)
+	response := h.service.ReviewInvoice(ctx, invoiceID, approve, reqUserId, role)
 	utils.WriteToJson(w, response.StatusCode, response)
 }
 
