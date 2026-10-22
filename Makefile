@@ -3,9 +3,9 @@ DB_PORT ?=5432
 DB_USER ?=postgres
 DB_PASSWORD ?=davidhero125.
 DB_NAME ?= stellance
-DB_SSL ?=require
+DB_SSL ?=disable
 
-DATABASE_URL ?= postgresql://postgres:wLpviKbSbfDDSIEYxlxZafVNmMRRBPxS@trolley.proxy.rlwy.net:54169/railway?sslmode=$(DB_SSL)
+DATABASE_URL ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSL)
 MIGRATIONS_PATH ?= migrations
 
 .PHONY: migrate-up migrate-down migrate-create migrate-version migrate-force
