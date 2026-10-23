@@ -252,6 +252,8 @@ func (is *InvoiceService) GenerateNewInvoice(ctx context.Context, dto CreateInvo
 		Note:          dto.Note,
 	}
 
+	is.attachPayment(ctx, &invoiceResponse)
+
 	is.log.Info("invoice created successfully",
 		"invoice_id", invoiceId,
 		"invoice_number", invoiceNumber,
@@ -562,6 +564,12 @@ func (is *InvoiceService) GetManyInvoice(ctx context.Context, dto InvoiceFilters
 		}
 	}
 
+	listed := make([]*InvoiceResponse, len(invoices))
+	for i := range invoices {
+		listed[i] = &invoices[i]
+	}
+	is.attachPayment(ctx, listed...)
+
 	totalPages := int(math.Ceil(float64(totalItems) / float64(dto.Count)))
 	response := InvoiceListResponseDto{
 		Invoice: invoices,
@@ -834,6 +842,47 @@ func (is *InvoiceService) buildSearchQuery(filters InvoiceFiltersDto, userId str
 }
 
 func (is *InvoiceService) GetInvoiceById(ctx context.Context, invoiceId, userId, role string) *utils.ApiResponse {
+	resp := is.getInvoiceById(ctx, invoiceId, userId, role)
+	switch d := resp.Data.(type) {
+	case InvoiceResponse:
+		is.attachPayment(ctx, &d)
+		resp.Data = d
+	case *InvoiceResponse:
+		is.attachPayment(ctx, d)
+	}
+	return resp
+}
+
+// attachPayment fills the payment fields from the invoice status and its payment reference.
+func (is *InvoiceService) attachPayment(ctx context.Context, invs ...*InvoiceResponse) {
+	if len(invs) == 0 {
+		return
+	}
+	ids := make([]string, len(invs))
+	for i, inv := range invs {
+		ids[i] = inv.ID
+		inv.PaymentStatus = payments.PaymentStatusFor(inv.Status)
+	}
+	rows, err := is.postgres.Query(ctx, `SELECT id::text, payment_reference FROM invoice WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		is.log.Warn("failed to load payment references", "error", err)
+		return
+	}
+	refs, err := pgx.CollectRows(rows, pgx.RowToStructByPos[struct{ ID, Ref string }])
+	if err != nil {
+		is.log.Warn("failed to read payment references", "error", err)
+		return
+	}
+	byID := make(map[string]string, len(refs))
+	for _, r := range refs {
+		byID[r.ID] = r.Ref
+	}
+	for _, inv := range invs {
+		inv.PaymentReference = byID[inv.ID]
+	}
+}
+
+func (is *InvoiceService) getInvoiceById(ctx context.Context, invoiceId, userId, role string) *utils.ApiResponse {
 	log := is.log
 
 	if _, err := uuid.Parse(invoiceId); err != nil {
@@ -1104,6 +1153,7 @@ func (is *InvoiceService) GetInvoiceSearch(ctx context.Context, invoiceUrl, invo
 		inv.CreatedBy.Email = ""
 		inv.CreatedBy.PhoneNumber = nil
 	}
+	is.attachPayment(ctx, &inv)
 	return &utils.ApiResponse{StatusCode: resp.StatusCode, Message: resp.Message, Data: inv}
 }
 
@@ -1565,6 +1615,12 @@ func (is *InvoiceService) GetInvoiceBySearchOnUser(
 		}
 		responses = append(responses, response)
 	}
+
+	listed := make([]*InvoiceResponse, len(responses))
+	for i := range responses {
+		listed[i] = &responses[i]
+	}
+	is.attachPayment(ctx, listed...)
 
 	meta := SearchPaginationMeta{
 		Total:   total,

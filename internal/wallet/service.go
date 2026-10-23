@@ -878,7 +878,7 @@ func (ws *WalletService) PayInvoice(ctx context.Context, walletID, userID string
 	}
 	vendorAddress := req.Recipient
 	destAmount := req.Amount
-	destAssetCode := req.Asset
+	destAssetCode := req.AssetCode
 
 	kp, err := ws.getKeyPairForWallet(ctx, walletID)
 	if err != nil {

@@ -2,6 +2,7 @@ package payments
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,7 @@ type PaymentService struct {
 	chain    func(ctx context.Context) (chainClient, string, error)
 	now      func() time.Time
 	onPaid   func(invoiceID, txHash string)
+	onReview func(recipient, txHash string, status VerificationStatus, reason string)
 }
 
 func NewPaymentService() *PaymentService {
@@ -54,6 +56,7 @@ func NewPaymentService() *PaymentService {
 	}
 	s.chain = s.resolveNetwork
 	s.onPaid = s.notifyPaid
+	s.onReview = s.notifyReview
 	return s
 }
 
@@ -161,11 +164,11 @@ type execer interface {
 }
 
 // recordRejectedTransaction puts an incoming payment that did not settle an invoice into the wallet
-// owner's transaction history. Unmatched deposits are funding; everything else is a failed payment.
+// owner's history. The ledger status is the on-chain result; the verification result stays on the payment.
 func recordRejectedTransaction(ctx context.Context, e execer, p chainPayment, invoiceID *string, status VerificationStatus) error {
-	txType, txStatus := "payment", "failed"
-	if status == StatusUnmatched {
-		txType, txStatus = "funding", "confirmed"
+	txStatus := "confirmed"
+	if status == StatusFailed {
+		txStatus = "failed"
 	}
 	cur := strings.ToLower(p.Asset.Code)
 	if cur != "usdc" && cur != "xlm" {
@@ -175,11 +178,11 @@ func recordRejectedTransaction(ctx context.Context, e execer, p chainPayment, in
 		INSERT INTO transactions (invoice_id, wallet_id, transaction_hash, user_id, amount, currency, status,
 		                          token_type, transaction_type, confirmed_at)
 		SELECT $1, w.id, $2, w.user_id, $3::text::numeric, $4::currency_type, $5::transaction_status,
-		       $4::currency_type, $6::transaction_type, $7
-		FROM wallets w WHERE w.address = $8 AND w.chain = 'stellar'
+		       $4::currency_type, 'payment', $6
+		FROM wallets w WHERE w.address = $7 AND w.chain = 'stellar'
 		LIMIT 1
 		ON CONFLICT (transaction_hash) DO NOTHING`,
-		invoiceID, p.TxHash, amount.StringFromInt64(p.Stroops), cur, txStatus, txType, p.ClosedAt, p.To)
+		invoiceID, p.TxHash, amount.StringFromInt64(p.Stroops), cur, txStatus, p.ClosedAt, p.To)
 	if err != nil {
 		return fmt.Errorf("record %s transaction for payment %s: %w", status, p.OperationID, err)
 	}
@@ -193,10 +196,10 @@ func (s *PaymentService) insertSettled(ctx context.Context, p chainPayment, invo
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO payments (`+insertPaymentCols+`, verification_status, failure_reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9, $10, $11::payment_verification_status, $12)
+		INSERT INTO payments (`+insertPaymentCols+`, verification_status, failure_reason, failure_code, checks, expected)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9, $10, $11::payment_verification_status, $12, $13, $14, $15)
 		ON CONFLICT (operation_id) DO NOTHING`,
-		append(insertArgs(p, invoiceID), string(v.Status), v.Reason)...)
+		append(insertArgs(p, invoiceID), string(v.Status), v.Reason, nullIfEmpty(v.Code), v.checksJSON(), v.expectedJSON())...)
 	if err != nil {
 		return fmt.Errorf("insert %s payment %s: %w", v.Status, p.OperationID, err)
 	}
@@ -205,7 +208,39 @@ func (s *PaymentService) insertSettled(ctx context.Context, p chainPayment, invo
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		s.review(p, v)
+	}
+	return nil
+}
+
+func (s *PaymentService) review(p chainPayment, v verdict) {
+	if s.onReview != nil && (v.Status == StatusInvalid || v.Status == StatusUnmatched) {
+		go s.onReview(p.To, p.TxHash, v.Status, v.Reason)
+	}
+}
+
+func nullIfEmpty(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func (v verdict) checksJSON() []byte {
+	b, _ := json.Marshal(v.Checks)
+	return b
+}
+
+func (v verdict) expectedJSON() []byte {
+	if v.Expected == nil {
+		return nil
+	}
+	b, _ := json.Marshal(v.Expected)
+	return b
 }
 
 // insertDetected stores the payment as 'detected' and flags the invoice. It returns the payment id when
@@ -305,7 +340,8 @@ func (s *PaymentService) finalize(ctx context.Context, paymentID, stage string) 
 			return fmt.Errorf("invoice %s left a payable state while locked", invoiceID)
 		}
 		if _, err = tx.Exec(ctx, `
-			UPDATE payments SET verification_status = 'verified', verified_at = NOW() WHERE id = $1`, paymentID); err != nil {
+			UPDATE payments SET verification_status = 'verified', verified_at = NOW(), checks = $2, expected = $3 WHERE id = $1`,
+			paymentID, v.checksJSON(), v.expectedJSON()); err != nil {
 			return fmt.Errorf("verify payment %s: %w", paymentID, err)
 		}
 		if _, err = tx.Exec(ctx, `
@@ -320,8 +356,9 @@ func (s *PaymentService) finalize(ctx context.Context, paymentID, stage string) 
 		}
 	} else {
 		if _, err = tx.Exec(ctx, `
-			UPDATE payments SET verification_status = $2::payment_verification_status, failure_reason = $3
-			WHERE id = $1`, paymentID, string(v.Status), v.Reason); err != nil {
+			UPDATE payments SET verification_status = $2::payment_verification_status, failure_reason = $3,
+			       failure_code = $4, checks = $5, expected = $6
+			WHERE id = $1`, paymentID, string(v.Status), v.Reason, nullIfEmpty(v.Code), v.checksJSON(), v.expectedJSON()); err != nil {
 			return fmt.Errorf("reject payment %s: %w", paymentID, err)
 		}
 		if err = recordRejectedTransaction(ctx, tx, p, &invoiceID, v.Status); err != nil {
@@ -342,6 +379,8 @@ func (s *PaymentService) finalize(ctx context.Context, paymentID, stage string) 
 	s.invalidateInvoiceCache(ctx, invoiceID)
 	if v.Status == StatusVerified {
 		go s.onPaid(invoiceID, p.TxHash)
+	} else {
+		s.review(p, v)
 	}
 	return nil
 }
@@ -353,6 +392,25 @@ func (s *PaymentService) invalidateInvoiceCache(ctx context.Context, invoiceID s
 	if err := s.redis.Del(ctx, "invoice:"+invoiceID).Err(); err != nil {
 		s.log.Warn("failed to clear invoice cache", "invoice_id", invoiceID, "error", err)
 	}
+}
+
+func (s *PaymentService) notifyReview(recipient, txHash string, status VerificationStatus, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var userID string
+	if err := s.postgres.QueryRow(ctx, `SELECT user_id FROM wallets WHERE address = $1 AND chain = 'stellar' LIMIT 1`, recipient).Scan(&userID); err != nil {
+		return
+	}
+	title := "Payment Needs Review"
+	if status == StatusUnmatched {
+		title = "Unmatched Payment Received"
+	}
+	notifications.NewNotificationService().CreateNewNotification(ctx, notifications.CreateNotificationDto{
+		Title:  title,
+		UserId: userID,
+		Body:   fmt.Sprintf("A payment could not be matched to an invoice (%s). Tx: %s", reason, txHash),
+	})
 }
 
 func (s *PaymentService) notifyPaid(invoiceID, txHash string) {

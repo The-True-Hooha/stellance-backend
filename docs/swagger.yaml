@@ -255,6 +255,138 @@ definitions:
     required:
     - comment_text
     type: object
+  payments.Checks:
+    properties:
+      amount:
+        type: string
+      asset:
+        type: string
+      invoice:
+        type: string
+      recipient:
+        type: string
+      reference:
+        type: string
+      success:
+        type: string
+    type: object
+  payments.Expected:
+    properties:
+      amount:
+        type: string
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      payment_reference:
+        type: string
+      recipient:
+        type: string
+    type: object
+  payments.PageMeta:
+    properties:
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  payments.PaymentList:
+    properties:
+      meta:
+        $ref: '#/definitions/payments.PageMeta'
+      payments:
+        items:
+          $ref: '#/definitions/payments.PaymentRecord'
+        type: array
+    type: object
+  payments.PaymentRecord:
+    properties:
+      amount:
+        type: string
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      checks:
+        $ref: '#/definitions/payments.Checks'
+      detected_at:
+        type: string
+      expected:
+        $ref: '#/definitions/payments.Expected'
+      explorer_url:
+        type: string
+      failure_code:
+        type: string
+      failure_reason:
+        type: string
+      id:
+        type: string
+      invoice_id:
+        type: string
+      invoice_number:
+        type: string
+      ledger_closed_at:
+        type: string
+      merchant_email:
+        type: string
+      payment_reference:
+        type: string
+      recipient:
+        type: string
+      sender:
+        type: string
+      transaction_hash:
+        type: string
+      verification_status:
+        type: string
+      verified_at:
+        type: string
+    type: object
+  payments.PaymentRequest:
+    properties:
+      amount:
+        type: string
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      expires_at:
+        type: string
+      explorer_url:
+        type: string
+      invoice_id:
+        type: string
+      invoice_number:
+        type: string
+      invoice_status:
+        type: string
+      network:
+        type: string
+      paid_at:
+        type: string
+      payment_detected_at:
+        type: string
+      payment_reference:
+        type: string
+      payment_status:
+        type: string
+      payments:
+        items:
+          $ref: '#/definitions/payments.PaymentRecord'
+        type: array
+      recipient:
+        type: string
+      transaction_hash:
+        type: string
+      verification_status:
+        type: string
+      verified_at:
+        type: string
+    type: object
   payments.VerifyTransactionDTO:
     properties:
       transaction_hash:
@@ -605,14 +737,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/utils.ApiResponse'
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/payments.PaymentList'
+              type: object
         "403":
           description: Forbidden
           schema:
             $ref: '#/definitions/utils.ApiResponse'
       security:
       - BearerAuth: []
-      summary: All platform payments (v2)
+      summary: All platform payments, with merchant email (v2)
       tags:
       - admin
   /admin/stats:
@@ -1822,13 +1959,13 @@ paths:
         in: query
         name: status
         type: string
-      - description: page size, max 100
+      - description: page number, from 1
+        in: query
+        name: page
+        type: integer
+      - description: page size, default 20, max 100
         in: query
         name: limit
-        type: integer
-      - description: offset
-        in: query
-        name: offset
         type: integer
       produces:
       - application/json
@@ -1836,11 +1973,45 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/utils.ApiResponse'
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/payments.PaymentList'
+              type: object
       security:
       - BearerAuth: []
       summary: Payments received on the user's wallets (verified, invalid, unmatched,
         failed) (v2)
+      tags:
+      - payments-v2
+  /payments/{id}:
+    get:
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/payments.PaymentRecord'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      security:
+      - BearerAuth: []
+      summary: One payment received on the user's wallets (v2)
       tags:
       - payments-v2
   /payments/invoice/{id}:
@@ -1857,7 +2028,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/utils.ApiResponse'
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/payments.PaymentRequest'
+              type: object
       security:
       - BearerAuth: []
       summary: Payment request, status and payment records of an invoice (v2)
@@ -1877,7 +2053,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/utils.ApiResponse'
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/payments.PaymentRequest'
+              type: object
       summary: Payment instructions for an invoice, by invoice url (v2)
       tags:
       - payments-v2
@@ -1885,6 +2066,8 @@ paths:
     post:
       consumes:
       - application/json
+      description: 'Returns 404 when the hash is unknown to Stellar. Status values
+        and transitions: docs/payment-status-model.md (v2)'
       parameters:
       - description: Transaction hash
         in: body
@@ -1898,10 +2081,17 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/utils.ApiResponse'
+            allOf:
+            - $ref: '#/definitions/utils.ApiResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/payments.PaymentRecord'
+                  type: array
+              type: object
       security:
       - BearerAuth: []
-      summary: Re-check a Stellar transaction against invoices (v2)
+      summary: Re-check a Stellar transaction against invoices
       tags:
       - payments-v2
   /profile:

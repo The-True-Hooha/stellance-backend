@@ -80,6 +80,8 @@ type InvoiceResponse struct {
 	TemplateID         TemplateIDType       `json:"template_id" validate:"required"`
 	LogoURL            string               `json:"logo_url,omitempty"`
 	Note               string               `json:"note,omitempty"`
+	PaymentStatus      string               `json:"payment_status"`
+	PaymentReference   string               `json:"payment_reference"`
 }
 
 type InvoiceListResponseDto struct {

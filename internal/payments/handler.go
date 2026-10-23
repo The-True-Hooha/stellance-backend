@@ -35,7 +35,7 @@ func userID(w http.ResponseWriter, r *http.Request) (string, bool) {
 // @Tags         payments-v2
 // @Produce      json
 // @Param        id   path  string  true  "Invoice ID"
-// @Success      200  {object}  utils.ApiResponse
+// @Success      200  {object}  utils.ApiResponse{data=PaymentRequest}
 // @Security     BearerAuth
 // @Router       /payments/invoice/{id} [get]
 func (h *PaymentHandler) GetInvoicePaymentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func (h *PaymentHandler) GetInvoicePaymentsHandler(w http.ResponseWriter, r *htt
 // @Tags         payments-v2
 // @Produce      json
 // @Param        invoice_url  path  string  true  "Invoice URL"
-// @Success      200  {object}  utils.ApiResponse
+// @Success      200  {object}  utils.ApiResponse{data=PaymentRequest}
 // @Router       /payments/request/{invoice_url} [get]
 func (h *PaymentHandler) GetPublicRequestHandler(w http.ResponseWriter, r *http.Request) {
 	write(w, h.service.GetPublicRequest(r.Context(), r.PathValue("invoice_url")))
@@ -62,9 +62,9 @@ func (h *PaymentHandler) GetPublicRequestHandler(w http.ResponseWriter, r *http.
 // @Tags         payments-v2
 // @Produce      json
 // @Param        status  query  string  false  "verification status"
-// @Param        limit   query  int     false  "page size, max 100"
-// @Param        offset  query  int     false  "offset"
-// @Success      200  {object}  utils.ApiResponse
+// @Param        page    query  int     false  "page number, from 1"
+// @Param        limit   query  int     false  "page size, default 20, max 100"
+// @Success      200  {object}  utils.ApiResponse{data=PaymentList}
 // @Security     BearerAuth
 // @Router       /payments [get]
 func (h *PaymentHandler) ListPaymentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,24 +79,19 @@ func (h *PaymentHandler) ListPaymentsHandler(w http.ResponseWriter, r *http.Requ
 		write(w, &utils.ApiResponse{StatusCode: http.StatusBadRequest, Message: "invalid status filter"})
 		return
 	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-	write(w, h.service.ListPayments(r.Context(), uid, status, limit, offset))
+	write(w, h.service.ListPayments(r.Context(), uid, status, page, limit))
 }
 
 // VerifyTransactionHandler godoc
-// @Summary      Re-check a Stellar transaction against invoices (v2)
+// @Summary      Re-check a Stellar transaction against invoices
+// @Description  Returns 404 when the hash is unknown to Stellar. Status values and transitions: docs/payment-status-model.md (v2)
 // @Tags         payments-v2
 // @Accept       json
 // @Produce      json
 // @Param        body  body  VerifyTransactionDTO  true  "Transaction hash"
-// @Success      200  {object}  utils.ApiResponse
+// @Success      200  {object}  utils.ApiResponse{data=[]PaymentRecord}
 // @Security     BearerAuth
 // @Router       /payments/verify [post]
 func (h *PaymentHandler) VerifyTransactionHandler(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +112,7 @@ func (h *PaymentHandler) VerifyTransactionHandler(w http.ResponseWriter, r *http
 }
 
 // AdminListPaymentsHandler godoc
-// @Summary      All platform payments (v2)
+// @Summary      All platform payments, with merchant email (v2)
 // @Description  Paginated list of every detected payment, including unmatched, invalid and failed ones
 // @Tags         admin
 // @Produce      json
@@ -125,7 +120,7 @@ func (h *PaymentHandler) VerifyTransactionHandler(w http.ResponseWriter, r *http
 // @Param        limit   query  int     false  "Items per page, max 100"
 // @Param        status  query  string  false  "verification status"
 // @Param        search  query  string  false  "transaction hash, payment reference, address or invoice number"
-// @Success      200  {object}  utils.ApiResponse
+// @Success      200  {object}  utils.ApiResponse{data=PaymentList}
 // @Failure      403  {object}  utils.ApiResponse
 // @Security     BearerAuth
 // @Router       /admin/payments [get]
@@ -140,4 +135,21 @@ func (h *PaymentHandler) AdminListPaymentsHandler(w http.ResponseWriter, r *http
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	write(w, h.service.AdminListPayments(r.Context(), status, r.URL.Query().Get("search"), page, limit))
+}
+
+// GetPaymentHandler godoc
+// @Summary      One payment received on the user's wallets (v2)
+// @Tags         payments-v2
+// @Produce      json
+// @Param        id   path  string  true  "Payment ID"
+// @Success      200  {object}  utils.ApiResponse{data=PaymentRecord}
+// @Failure      404  {object}  utils.ApiResponse
+// @Security     BearerAuth
+// @Router       /payments/{id} [get]
+func (h *PaymentHandler) GetPaymentHandler(w http.ResponseWriter, r *http.Request) {
+	uid, ok := userID(w, r)
+	if !ok {
+		return
+	}
+	write(w, h.service.GetPayment(r.Context(), uid, r.PathValue("id")))
 }

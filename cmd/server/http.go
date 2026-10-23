@@ -161,6 +161,11 @@ func startOverdueCron(db *pgxpool.Pool, log *slog.Logger) {
 }
 
 func startPaymentMonitor(svc *payments.PaymentService, log *slog.Logger) {
+	seedCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := svc.EnsureNetworkConfig(seedCtx); err != nil {
+		log.Error("failed to seed network config", "error", err)
+	}
+	cancel()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {

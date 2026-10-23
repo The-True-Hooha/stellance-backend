@@ -5,18 +5,24 @@ import "time"
 type PaymentRecord struct {
 	ID                 string     `json:"id"`
 	InvoiceID          *string    `json:"invoice_id,omitempty"`
+	InvoiceNumber      *string    `json:"invoice_number"`
 	TransactionHash    string     `json:"transaction_hash"`
 	ExplorerURL        string     `json:"explorer_url"`
 	Sender             string     `json:"sender"`
 	Recipient          string     `json:"recipient"`
-	Asset              string     `json:"asset"`
+	AssetCode          string     `json:"asset_code"`
+	AssetIssuer        *string    `json:"asset_issuer"`
 	Amount             string     `json:"amount"`
-	PaymentReference   *string    `json:"payment_reference,omitempty"`
+	PaymentReference   *string    `json:"payment_reference"`
 	VerificationStatus string     `json:"verification_status"`
-	FailureReason      *string    `json:"failure_reason,omitempty"`
+	FailureCode        *string    `json:"failure_code"`
+	FailureReason      *string    `json:"failure_reason"`
+	Checks             *Checks    `json:"checks"`
+	Expected           *Expected  `json:"expected"`
 	LedgerClosedAt     time.Time  `json:"ledger_closed_at"`
 	DetectedAt         time.Time  `json:"detected_at"`
-	VerifiedAt         *time.Time `json:"verified_at,omitempty"`
+	VerifiedAt         *time.Time `json:"verified_at"`
+	MerchantEmail      *string    `json:"merchant_email,omitempty"`
 }
 
 // PaymentRequest is what a payer needs to pay an invoice and what the owner needs to track it.
@@ -26,8 +32,8 @@ type PaymentRequest struct {
 	InvoiceStatus      string          `json:"invoice_status"`
 	PaymentStatus      string          `json:"payment_status"`
 	Amount             string          `json:"amount"`
-	Asset              string          `json:"asset"`
-	AssetIssuer        *string         `json:"asset_issuer,omitempty"`
+	AssetCode          string          `json:"asset_code"`
+	AssetIssuer        *string         `json:"asset_issuer"`
 	Recipient          string          `json:"recipient"`
 	PaymentReference   string          `json:"payment_reference"`
 	Network            string          `json:"network"`
@@ -47,11 +53,23 @@ type VerifyTransactionDTO struct {
 	TransactionHash string `json:"transaction_hash" validate:"required,len=64,hexadecimal"`
 }
 
-func paymentStatusFor(invoiceStatus string) string {
+func PaymentStatusFor(invoiceStatus string) string {
 	switch invoiceStatus {
 	case "paid", "payment_detected", "invalid_payment", "expired", "cancelled", "draft", "refunded":
 		return invoiceStatus
 	default:
 		return "awaiting_payment"
 	}
+}
+
+type PageMeta struct {
+	Page       int `json:"page"`
+	Limit      int `json:"limit"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+type PaymentList struct {
+	Payments []PaymentRecord `json:"payments"`
+	Meta     PageMeta        `json:"meta"`
 }

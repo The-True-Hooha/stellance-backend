@@ -213,7 +213,7 @@ const docTemplate = `{
                 "tags": [
                     "admin"
                 ],
-                "summary": "All platform payments (v2)",
+                "summary": "All platform payments, with merchant email (v2)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -244,7 +244,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/utils.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/payments.PaymentList"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "403": {
@@ -2181,14 +2193,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "page size, max 100",
-                        "name": "limit",
+                        "description": "page number, from 1",
+                        "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "offset",
-                        "name": "offset",
+                        "description": "page size, default 20, max 100",
+                        "name": "limit",
                         "in": "query"
                     }
                 ],
@@ -2196,7 +2208,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/utils.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/payments.PaymentList"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2229,7 +2253,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/utils.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/payments.PaymentRequest"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2257,7 +2293,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/utils.ApiResponse"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/payments.PaymentRequest"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2270,6 +2318,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Returns 404 when the hash is unknown to Stellar. Status values and transitions: docs/payment-status-model.md (v2)",
                 "consumes": [
                     "application/json"
                 ],
@@ -2279,7 +2328,7 @@ const docTemplate = `{
                 "tags": [
                     "payments-v2"
                 ],
-                "summary": "Re-check a Stellar transaction against invoices (v2)",
+                "summary": "Re-check a Stellar transaction against invoices",
                 "parameters": [
                     {
                         "description": "Transaction hash",
@@ -2294,6 +2343,72 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/payments.PaymentRecord"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments-v2"
+                ],
+                "summary": "One payment received on the user's wallets (v2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.ApiResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/payments.PaymentRecord"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.ApiResponse"
                         }
@@ -3610,6 +3725,207 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "payments.Checks": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset": {
+                    "type": "string"
+                },
+                "invoice": {
+                    "type": "string"
+                },
+                "recipient": {
+                    "type": "string"
+                },
+                "reference": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "string"
+                }
+            }
+        },
+        "payments.Expected": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "payment_reference": {
+                    "type": "string"
+                },
+                "recipient": {
+                    "type": "string"
+                }
+            }
+        },
+        "payments.PageMeta": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "payments.PaymentList": {
+            "type": "object",
+            "properties": {
+                "meta": {
+                    "$ref": "#/definitions/payments.PageMeta"
+                },
+                "payments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/payments.PaymentRecord"
+                    }
+                }
+            }
+        },
+        "payments.PaymentRecord": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "checks": {
+                    "$ref": "#/definitions/payments.Checks"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "expected": {
+                    "$ref": "#/definitions/payments.Expected"
+                },
+                "explorer_url": {
+                    "type": "string"
+                },
+                "failure_code": {
+                    "type": "string"
+                },
+                "failure_reason": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invoice_id": {
+                    "type": "string"
+                },
+                "invoice_number": {
+                    "type": "string"
+                },
+                "ledger_closed_at": {
+                    "type": "string"
+                },
+                "merchant_email": {
+                    "type": "string"
+                },
+                "payment_reference": {
+                    "type": "string"
+                },
+                "recipient": {
+                    "type": "string"
+                },
+                "sender": {
+                    "type": "string"
+                },
+                "transaction_hash": {
+                    "type": "string"
+                },
+                "verification_status": {
+                    "type": "string"
+                },
+                "verified_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "payments.PaymentRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "explorer_url": {
+                    "type": "string"
+                },
+                "invoice_id": {
+                    "type": "string"
+                },
+                "invoice_number": {
+                    "type": "string"
+                },
+                "invoice_status": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "paid_at": {
+                    "type": "string"
+                },
+                "payment_detected_at": {
+                    "type": "string"
+                },
+                "payment_reference": {
+                    "type": "string"
+                },
+                "payment_status": {
+                    "type": "string"
+                },
+                "payments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/payments.PaymentRecord"
+                    }
+                },
+                "recipient": {
+                    "type": "string"
+                },
+                "transaction_hash": {
+                    "type": "string"
+                },
+                "verification_status": {
+                    "type": "string"
+                },
+                "verified_at": {
                     "type": "string"
                 }
             }

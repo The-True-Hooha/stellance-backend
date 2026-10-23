@@ -217,22 +217,23 @@ func TestRejectedPaymentsNeverPayInvoice(t *testing.T) {
 		wantPay    VerificationStatus
 		wantInv    string
 		wantLinked bool
+		wantCode   string
 	}{
 		{"insufficient", func(ref string) chainPayment {
 			return chainPayment{Stroops: 99_9999999, Memo: ref, Successful: true}
-		}, StatusInvalid, "invalid_payment", true},
+		}, StatusInvalid, "invalid_payment", true, CodeInsufficientAmount},
 		{"wrong asset", func(ref string) chainPayment {
 			return chainPayment{Stroops: 100_0000000, Memo: ref, Successful: true, Asset: asset{Code: "USDC", Issuer: addr("GFAKE")}}
-		}, StatusInvalid, "invalid_payment", true},
+		}, StatusInvalid, "invalid_payment", true, CodeWrongAsset},
 		{"wrong memo", func(ref string) chainPayment {
 			return chainPayment{Stroops: 100_0000000, Memo: "STL-NOPE", Successful: true}
-		}, StatusUnmatched, "sent", false},
+		}, StatusUnmatched, "sent", false, CodeUnknownReference},
 		{"no memo", func(ref string) chainPayment {
 			return chainPayment{Stroops: 100_0000000, Successful: true}
-		}, StatusUnmatched, "sent", false},
+		}, StatusUnmatched, "sent", false, CodeMissingReference},
 		{"failed transaction", func(ref string) chainPayment {
 			return chainPayment{Stroops: 100_0000000, Memo: ref, Successful: false}
-		}, StatusFailed, "sent", true},
+		}, StatusFailed, "sent", true, CodeTransactionFailed},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -252,12 +253,20 @@ func TestRejectedPaymentsNeverPayInvoice(t *testing.T) {
 			if (inv != nil) != tc.wantLinked {
 				t.Fatalf("payment linked to invoice = %v, want %v", inv != nil, tc.wantLinked)
 			}
-			if n := f.count(`SELECT COUNT(*) FROM transactions WHERE status = 'confirmed' AND transaction_type = 'payment'`); n != 0 {
-				t.Fatalf("settled payment rows = %d, want 0", n)
+			wantLedger := "confirmed"
+			if tc.wantPay == StatusFailed {
+				wantLedger = "failed"
 			}
-			wantHistory := 1
-			if n := f.count(`SELECT COUNT(*) FROM transactions`); n != wantHistory {
-				t.Fatalf("wallet history rows = %d, want %d", n, wantHistory)
+			if n := f.count(`SELECT COUNT(*) FROM transactions WHERE status = $1 AND transaction_type = 'payment'`, wantLedger); n != 1 {
+				t.Fatalf("history rows with ledger status %s = %d, want 1", wantLedger, n)
+			}
+			var code string
+			if err := f.db.QueryRow(context.Background(),
+				`SELECT COALESCE(failure_code, '') FROM payments WHERE operation_id = $1`, p.OperationID).Scan(&code); err != nil {
+				t.Fatal(err)
+			}
+			if code != tc.wantCode {
+				t.Fatalf("failure_code = %q, want %q", code, tc.wantCode)
 			}
 		})
 	}
@@ -462,7 +471,7 @@ func TestEnsurePaymentRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Recipient != vendorAddr || req.PaymentReference != ref || req.Asset != "USDC" || req.PaymentStatus != "awaiting_payment" {
+	if req.Recipient != vendorAddr || req.PaymentReference != ref || req.AssetCode != "USDC" || req.PaymentStatus != "awaiting_payment" {
 		t.Fatalf("unexpected request %+v", req)
 	}
 
@@ -501,5 +510,63 @@ func TestPaymentToClosedInvoiceWithoutRecipientIsInvalidNotUnmatched(t *testing.
 				t.Fatalf("failure_reason = %q, want %q", reason, wantReason)
 			}
 		})
+	}
+}
+
+func TestPaymentRecordCarriesChecksAndIsScopedToMerchant(t *testing.T) {
+	f := newFixture(t)
+	_, ref := f.vendorInvoice("100")
+	p := f.send(vendorAddr, chainPayment{Stroops: 99_0000000, Memo: ref, Successful: true})
+	f.poll()
+
+	var id string
+	if err := f.db.QueryRow(context.Background(), `SELECT id FROM payments WHERE operation_id = $1`, p.OperationID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.svc.GetPayment(context.Background(), f.user, id)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	rec := resp.Data.(PaymentRecord)
+	if rec.Amount != "99.0000000" || rec.AssetCode != "USDC" || rec.AssetIssuer == nil || rec.InvoiceNumber == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Checks == nil || rec.Checks.Amount != CheckFail || rec.Checks.Recipient != CheckPass || rec.Checks.Reference != CheckPass || rec.Checks.Success != CheckPass {
+		t.Fatalf("checks = %+v", rec.Checks)
+	}
+	if rec.Expected == nil || rec.Expected.Amount != "100.0000000" || rec.Expected.Recipient != vendorAddr || rec.Expected.PaymentReference != ref {
+		t.Fatalf("expected = %+v", rec.Expected)
+	}
+	if rec.FailureCode == nil || *rec.FailureCode != CodeInsufficientAmount {
+		t.Fatalf("failure_code = %v", rec.FailureCode)
+	}
+
+	var other string
+	if err := f.db.QueryRow(context.Background(), `INSERT INTO users (email) VALUES ('other@example.com') RETURNING id`).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.svc.GetPayment(context.Background(), other, id).StatusCode; got != 404 {
+		t.Fatalf("other merchant status = %d, want 404", got)
+	}
+
+	list := f.svc.ListPayments(context.Background(), f.user, "", 1, 500).Data.(PaymentList)
+	if list.Meta.Total != 1 || list.Meta.Limit != 20 || len(list.Payments) != 1 {
+		t.Fatalf("list = %+v", list.Meta)
+	}
+	admin := f.svc.AdminListPayments(context.Background(), "", "", 1, 20).Data.(PaymentList)
+	if admin.Payments[0].MerchantEmail == nil || *admin.Payments[0].MerchantEmail != "vendor@example.com" {
+		t.Fatalf("merchant email = %v", admin.Payments[0].MerchantEmail)
+	}
+}
+
+func TestDuplicateToPaidInvoiceIsInvalidEvenWithWrongRecipient(t *testing.T) {
+	inv := &invoiceView{ID: "i", Status: invoicePaid, Recipient: "GA", Reference: "STL-X", Stroops: 5}
+	p := chainPayment{Successful: true, Memo: "STL-X", To: "GB", Stroops: 5, Asset: asset{Code: "XLM"}}
+	v := evaluate(p, inv, asset{Code: "XLM"})
+	if v.Status != StatusInvalid || v.Code != CodeDuplicate {
+		t.Fatalf("verdict = %+v", v)
+	}
+	if v.Checks.Recipient != CheckFail || v.Checks.Invoice != CheckFail || v.Checks.Reference != CheckPass {
+		t.Fatalf("checks = %+v", v.Checks)
 	}
 }

@@ -3,6 +3,8 @@ package payments
 import (
 	"fmt"
 	"time"
+
+	"github.com/stellar/go/amount"
 )
 
 type VerificationStatus string
@@ -68,37 +70,132 @@ type invoiceView struct {
 	ExpiresAt time.Time
 }
 
+const (
+	CheckPass = "pass"
+	CheckFail = "fail"
+	CheckSkip = "skip"
+)
+
+const (
+	CodeInsufficientAmount = "insufficient_amount"
+	CodeAmountMismatch     = "amount_mismatch"
+	CodeWrongAsset         = "wrong_asset"
+	CodeWrongRecipient     = "wrong_recipient"
+	CodeMissingReference   = "missing_reference"
+	CodeUnknownReference   = "unknown_reference"
+	CodeTransactionFailed  = "transaction_failed"
+	CodeDuplicate          = "duplicate"
+	CodeInvoiceNotPayable  = "invoice_not_payable"
+	CodeExpired            = "expired"
+	CodeInvalidInvoice     = "invalid_invoice_total"
+)
+
+// Expected is what the invoice demanded, in the same units as the payment record.
+type Expected struct {
+	Amount           string  `json:"amount"`
+	AssetCode        string  `json:"asset_code"`
+	AssetIssuer      *string `json:"asset_issuer"`
+	Recipient        string  `json:"recipient"`
+	PaymentReference string  `json:"payment_reference"`
+}
+
+type Checks struct {
+	Recipient string `json:"recipient"`
+	Asset     string `json:"asset"`
+	Amount    string `json:"amount"`
+	Reference string `json:"reference"`
+	Success   string `json:"success"`
+	Invoice   string `json:"invoice"`
+}
+
 type verdict struct {
-	Status VerificationStatus
-	Reason string
+	Status   VerificationStatus
+	Reason   string
+	Code     string
+	Checks   Checks
+	Expected *Expected
+}
+
+func passFail(ok bool) string {
+	if ok {
+		return CheckPass
+	}
+	return CheckFail
+}
+
+func newExpected(inv *invoiceView, expected asset) *Expected {
+	if inv == nil {
+		return nil
+	}
+	e := &Expected{
+		Amount:           amount.StringFromInt64(inv.Stroops),
+		AssetCode:        expected.Code,
+		Recipient:        inv.Recipient,
+		PaymentReference: inv.Reference,
+	}
+	if expected.Issuer != "" {
+		e.AssetIssuer = &expected.Issuer
+	}
+	return e
+}
+
+func computeChecks(p chainPayment, inv *invoiceView, expected asset) Checks {
+	c := Checks{
+		Success:   passFail(p.Successful),
+		Recipient: CheckSkip, Asset: CheckSkip, Amount: CheckSkip, Invoice: CheckSkip,
+		Reference: CheckFail,
+	}
+	if inv == nil {
+		return c
+	}
+	c.Reference = CheckPass
+	c.Recipient = passFail(inv.Recipient != "" && p.To == inv.Recipient)
+	c.Asset = passFail(p.Asset == expected)
+	c.Amount = passFail(inv.Stroops > 0 && p.Stroops == inv.Stroops)
+	switch {
+	case !payableInvoiceStatuses[inv.Status]:
+		c.Invoice = CheckFail
+	case !inv.ExpiresAt.IsZero() && !p.ClosedAt.Before(inv.ExpiresAt):
+		c.Invoice = CheckFail
+	default:
+		c.Invoice = CheckPass
+	}
+	return c
 }
 
 // evaluate is the single rule set deciding what an on-chain payment means for an invoice.
-// inv is nil when no invoice carries the payment's memo.
+// inv is nil when no invoice carries the payment's memo. An already-settled invoice is judged
+// a duplicate before anything else about the payment is questioned.
 func evaluate(p chainPayment, inv *invoiceView, expected asset) verdict {
+	v := verdict{Checks: computeChecks(p, inv, expected), Expected: newExpected(inv, expected)}
+	reject := func(st VerificationStatus, code, reason string) verdict {
+		v.Status, v.Code, v.Reason = st, code, reason
+		return v
+	}
 	switch {
 	case !p.Successful:
-		return verdict{StatusFailed, "transaction failed on Stellar"}
+		return reject(StatusFailed, CodeTransactionFailed, "transaction failed on Stellar")
 	case p.Memo == "":
-		return verdict{StatusUnmatched, "payment has no text memo reference"}
+		return reject(StatusUnmatched, CodeMissingReference, "payment has no text memo reference")
 	case inv == nil:
-		return verdict{StatusUnmatched, "no invoice matches the payment reference"}
-	case inv.Recipient == "" || p.To != inv.Recipient:
-		return verdict{StatusUnmatched, "payment recipient is not the invoice recipient"}
+		return reject(StatusUnmatched, CodeUnknownReference, "no invoice matches the payment reference")
 	case inv.Status == invoicePaid:
-		return verdict{StatusInvalid, "invoice is already paid"}
+		return reject(StatusInvalid, CodeDuplicate, "invoice is already paid")
+	case inv.Recipient == "" || p.To != inv.Recipient:
+		return reject(StatusUnmatched, CodeWrongRecipient, "payment recipient is not the invoice recipient")
 	case !payableInvoiceStatuses[inv.Status]:
-		return verdict{StatusInvalid, fmt.Sprintf("invoice is %s and cannot accept payment", inv.Status)}
+		return reject(StatusInvalid, CodeInvoiceNotPayable, fmt.Sprintf("invoice is %s and cannot accept payment", inv.Status))
 	case !inv.ExpiresAt.IsZero() && !p.ClosedAt.Before(inv.ExpiresAt):
-		return verdict{StatusInvalid, "invoice payment window has expired"}
+		return reject(StatusInvalid, CodeExpired, "invoice payment window has expired")
 	case inv.Stroops <= 0:
-		return verdict{StatusInvalid, "invoice total is zero"}
+		return reject(StatusInvalid, CodeInvalidInvoice, "invoice total is zero")
 	case p.Asset != expected:
-		return verdict{StatusInvalid, fmt.Sprintf("expected asset %s, received %s", expected, p.Asset)}
+		return reject(StatusInvalid, CodeWrongAsset, fmt.Sprintf("expected asset %s, received %s", expected, p.Asset))
 	case p.Stroops < inv.Stroops:
-		return verdict{StatusInvalid, fmt.Sprintf("insufficient amount: expected %d stroops, received %d", inv.Stroops, p.Stroops)}
+		return reject(StatusInvalid, CodeInsufficientAmount, fmt.Sprintf("insufficient amount: expected %s, received %s", amount.StringFromInt64(inv.Stroops), amount.StringFromInt64(p.Stroops)))
 	case p.Stroops > inv.Stroops:
-		return verdict{StatusInvalid, fmt.Sprintf("amount mismatch: expected %d stroops, received %d", inv.Stroops, p.Stroops)}
+		return reject(StatusInvalid, CodeAmountMismatch, fmt.Sprintf("amount mismatch: expected %s, received %s", amount.StringFromInt64(inv.Stroops), amount.StringFromInt64(p.Stroops)))
 	}
-	return verdict{StatusVerified, ""}
+	v.Status = StatusVerified
+	return v
 }

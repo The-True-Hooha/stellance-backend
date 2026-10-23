@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/The-True-Hooha/stellance-backend/pkg/utils"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -72,57 +73,85 @@ func (s *PaymentService) GetPublicRequest(ctx context.Context, invoiceURL string
 }
 
 // ListPayments returns payments received on the user's wallets, including unmatched and invalid ones.
-func (s *PaymentService) ListPayments(ctx context.Context, userID, status string, limit, offset int) *utils.ApiResponse {
-	_, stage, err := s.chain(ctx)
-	if err != nil {
-		return s.internalError("resolve network", err)
-	}
-
-	records, err := s.queryPayments(ctx, stage, `
-		WHERE p.recipient IN (SELECT address FROM wallets WHERE user_id = $1)
-		  AND ($2 = '' OR p.verification_status::text = $2)
-		ORDER BY p.detected_at DESC LIMIT $3 OFFSET $4`, userID, status, limit, offset)
-	if err != nil {
-		return s.internalError("list payments", err, "user_id", userID)
-	}
-	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: records}
-}
-
-// AdminListPayments lists every payment on the platform, newest first.
-func (s *PaymentService) AdminListPayments(ctx context.Context, status, search string, page, limit int) *utils.ApiResponse {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
+func (s *PaymentService) ListPayments(ctx context.Context, userID, status string, page, limit int) *utils.ApiResponse {
+	page, limit = pageArgs(page, limit)
 	_, stage, err := s.chain(ctx)
 	if err != nil {
 		return s.internalError("resolve network", err)
 	}
 
 	const filter = `
-		LEFT JOIN invoice i ON i.id = p.invoice_id
+		WHERE p.recipient IN (SELECT address FROM wallets WHERE user_id = $1)
+		  AND ($2 = '' OR p.verification_status::text = $2)`
+	var total int
+	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) FROM payments p `+filter, userID, status).Scan(&total); err != nil {
+		return s.internalError("count payments", err, "user_id", userID)
+	}
+	records, err := s.queryPayments(ctx, stage, filter+`
+		ORDER BY p.detected_at DESC LIMIT $3 OFFSET $4`, userID, status, limit, (page-1)*limit)
+	if err != nil {
+		return s.internalError("list payments", err, "user_id", userID)
+	}
+	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: PaymentList{Payments: records, Meta: pageMeta(page, limit, total)}}
+}
+
+// GetPayment returns one payment received on a wallet of the user.
+func (s *PaymentService) GetPayment(ctx context.Context, userID, id string) *utils.ApiResponse {
+	if _, err := uuid.Parse(id); err != nil {
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "payment not found"}
+	}
+	_, stage, err := s.chain(ctx)
+	if err != nil {
+		return s.internalError("resolve network", err)
+	}
+	records, err := s.queryPayments(ctx, stage, `
+		WHERE p.id = $1 AND p.recipient IN (SELECT address FROM wallets WHERE user_id = $2)`, id, userID)
+	if err != nil {
+		return s.internalError("load payment", err, "payment_id", id)
+	}
+	if len(records) == 0 {
+		return &utils.ApiResponse{StatusCode: http.StatusNotFound, Message: "payment not found"}
+	}
+	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payment", Data: records[0]}
+}
+
+func pageArgs(page, limit int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	return page, limit
+}
+
+func pageMeta(page, limit, total int) PageMeta {
+	return PageMeta{Page: page, Limit: limit, Total: total, TotalPages: (total + limit - 1) / limit}
+}
+
+// AdminListPayments lists every payment on the platform, newest first.
+func (s *PaymentService) AdminListPayments(ctx context.Context, status, search string, page, limit int) *utils.ApiResponse {
+	page, limit = pageArgs(page, limit)
+	_, stage, err := s.chain(ctx)
+	if err != nil {
+		return s.internalError("resolve network", err)
+	}
+
+	const filter = `
 		WHERE ($1 = '' OR p.verification_status::text = $1)
 		  AND ($2 = '' OR p.transaction_hash = $2 OR p.payment_reference ILIKE '%' || $2 || '%'
 		       OR p.sender = $2 OR p.recipient = $2 OR i.invoice_number ILIKE '%' || $2 || '%')`
 
 	var total int
-	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) FROM payments p `+filter, status, search).Scan(&total); err != nil {
+	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) `+paymentFrom+filter, status, search).Scan(&total); err != nil {
 		return s.internalError("count payments", err)
 	}
-	records, err := s.queryPayments(ctx, stage, filter+`
+	records, err := s.queryPaymentsFrom(ctx, adminPaymentSelect, stage, filter+`
 		ORDER BY p.detected_at DESC LIMIT $3 OFFSET $4`, status, search, limit, (page-1)*limit)
 	if err != nil {
 		return s.internalError("list all payments", err)
 	}
-	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: map[string]any{
-		"payments": records,
-		"meta": map[string]int{
-			"page": page, "limit": limit, "total": total,
-			"total_pages": (total + limit - 1) / limit,
-		},
-	}}
+	return &utils.ApiResponse{StatusCode: http.StatusOK, Message: "payments", Data: PaymentList{Payments: records, Meta: pageMeta(page, limit, total)}}
 }
 
 // VerifyTransactionForUser re-checks a transaction on chain. It reports the payments found and never

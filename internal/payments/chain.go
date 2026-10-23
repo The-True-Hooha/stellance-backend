@@ -157,3 +157,13 @@ func explorerTxURL(stage, hash string) string {
 	}
 	return "https://stellar.expert/explorer/testnet/tx/" + hash
 }
+
+// EnsureNetworkConfig seeds the admin network setting as testnet when it is unset.
+func (s *PaymentService) EnsureNetworkConfig(ctx context.Context) error {
+	enc, err := utils.EncryptValue("testnet")
+	if err != nil {
+		return err
+	}
+	_, err = s.postgres.Exec(ctx, `INSERT INTO system_config (key, value) VALUES ('stellar_network', $1) ON CONFLICT (key) DO NOTHING`, enc)
+	return err
+}
